@@ -154,8 +154,8 @@ constexpr int FLAME_TIME = 1200, FLAME_DMG = 2, FLAME_RANGE = 96, FLAME_PIECES =
 // Rockets are 21x10 (32x16 until the user had them made ~35% smaller) and hit with their nose, ROCKET_NOSE px ahead of their centre.
 constexpr int SPIKE_BLAST = 2;
 constexpr int ROCKET_SPLASH = 32, ROCKET_SPLASH_DMG = 3;   // the blast's reach (px, the fireball's radius) and damage to enemies in it
-// On Hard one every 0.5 s instead, on Expert every 0.3 s (HARD_/EXPERT_ROCKET_DELAY; user, 2026-10-24).
-constexpr int ROCKET_TIME = 1200, ROCKET_DMG = 6, ROCKET_DELAY = 42, HARD_ROCKET_DELAY = 30, EXPERT_ROCKET_DELAY = 18,
+// On Hard one every 0.5 s instead, on Expert every 0.5 s too (HARD_/EXPERT_ROCKET_DELAY; user, 2026-10-24; Expert was 0.3 s until 2026-10-25).
+constexpr int ROCKET_TIME = 1200, ROCKET_DMG = 6, ROCKET_DELAY = 42, HARD_ROCKET_DELAY = 30, EXPERT_ROCKET_DELAY = 30,
     ROCKET_NOSE = 9, BOOM_FRAMES = 6, BOOM_STEP = 4;
 const fixed ROCKET_SPEED = fixed(5);
 // Grenades (Expert only, user request, 2026-10-25): a card after the "WORLD 4" card says Mario found some, and he has
@@ -176,7 +176,6 @@ constexpr int FOE_DEMON = 4, DEMON_HP = 2, DEMON_STOMP_DMG = 2, DEMON_RANGE = 12
 constexpr int DEMON_BACK_OFF = 45;   // frames a demon flies away from Mario after touching him, before it comes at him again
 constexpr fixed DEMON_SPEED = fixed(1.3);   // px a frame when chasing (Mario runs at 2.3, so he can get away)
 const fixed FIRE_DELAY = fixed(14) / fixed(1.69);   // two 30% speed-ups on the original 14 frames
-const fixed EXPERT_FIRE_DELAY = fixed(6.6);          // the gun on Expert: a shot every 0.11 s (user, 2026-10-24; not the flame)
 const fixed BEAST_SHOT_SPEED = fixed(3.3);
 const fixed EPS = fixed::from_data(1);               // the web game's "- 0.01" nudge at tile edges
 constexpr int MAX_W = max_level_width;               // widest level (level_data.h)
@@ -432,7 +431,7 @@ int difficulty = 0;
 #endif
 bool hard = difficulty >= 1;
 constexpr int DIFFICULTIES = 3;
-constexpr const char* difficulty_names[DIFFICULTIES] = { "Normal", "Hard", "Expert" };
+constexpr const char* difficulty_names[DIFFICULTIES] = { "Easy", "Normal", "Hard" };   // shown names (user, 2026-10-25: were Normal/Hard/Expert; code names unchanged)
 void set_difficulty(int d) { difficulty = d; hard = d >= 1; }
 // A wait between shots in this difficulty: 1/1.4 of it in Hard, so shots come 40% faster
 int hard_frames(int n) { return hard ? (n * 5 + 3) / 7 : n; }
@@ -1664,7 +1663,7 @@ void shoot()
 {
     bool rocket = p.rocket > 0;
     p.cool += rocket ? fixed(difficulty == 2 ? EXPERT_ROCKET_DELAY : difficulty == 1 ? HARD_ROCKET_DELAY : ROCKET_DELAY)
-                   : difficulty == 2 ? EXPERT_FIRE_DELAY : FIRE_DELAY;
+                   : FIRE_DELAY;
     p.flash = 4;
     fixed mx = muzzle_x(), my = muzzle_y();
     int dx = aim_dx(), dy = aim_dy();
@@ -2982,7 +2981,7 @@ void draw_scores(int highlight)
     const hs_table& hs = hs_tables[hs_view];
     hs_clear_sprites(); clear_overlay();
     overlay_line(-58, "HIGH SCORES", true);
-    static constexpr const char* heads[DIFFICULTIES] = { "<  NORMAL  >", "<  HARD  >", "<  EXPERT  >" };
+    static constexpr const char* heads[DIFFICULTIES] = { "<  EASY  >", "<  NORMAL  >", "<  HARD  >" };
     overlay_line(-42, heads[hs_view]);
     for(int i = 0; i < HS_COUNT; ++i)
     {
@@ -3583,7 +3582,7 @@ void read_keys()
     K = keys_t();
     if(f == 150)
     {
-        static constexpr int scene_level[] = { 0, 0, 0, 4, 15, 15, 4, 0, 4, 4, 1, 2, 3, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 0, 15, 2, 7, 15, 1, 4, 9, 12, 1, 2, 4, 12, 4, 3, 13, 2, 1, 0, 0, 4, 8, 0, 3, 0, 7, 12, 0, 0, 4, 6, 11, 0, 12, 11, 0 };   // level indexes: 4 Graveyard, 8 City, 12 World 4-1, 15 Hell
+        static constexpr int scene_level[] = { 0, 0, 0, 4, 15, 15, 4, 0, 4, 4, 1, 2, 3, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 0, 15, 2, 7, 15, 1, 4, 9, 12, 1, 2, 4, 12, 4, 3, 13, 2, 1, 0, 0, 4, 8, 0, 3, 0, 7, 12, 0, 0, 4, 6, 11, 0, 12, 11, 0, 6 };   // level indexes: 4 Graveyard, 8 City, 12 World 4-1, 15 Hell
 #if SMHB_SCENE == 42 || SMHB_SCENE == 47 || SMHB_SCENE == 58
         return;   // this one starts from the title
 #endif   // level indexes: 4 Graveyard, 8 City, 12 World 4-1, 15 Hell
@@ -3684,6 +3683,13 @@ void read_keys()
     K.right = (g > 10 && g < 60) || (g > 330 && g < 400 && p.flame == 0 && p.rocket == 0);
     K.fire = g > 330;
     if(! p.dead) p.hp = MAX_HP;
+#elif SMHB_SCENE == 59
+    // World 2-3's 1-up block (moved off the plank onto the lawn at col 128, 2026-10-25): Mario 3 cols right of it shoots it,
+    // then takes the 1-up (a reaper patrols there; HP is kept full)
+    if(g == 2) { teleport(131, 11); p.face = -1; }
+    K.fire = g > 40 && g < 160;
+    K.left = g > 160 && g < 220 && p.x > 128 * T;
+    p.hp = MAX_HP;
 #elif SMHB_SCENE == 38
     // World 4-2's two 1-up blocks (moved onto the ground at cols 215 and 566, 2026-10-20): Mario lands on the ground 3 cols
     // right of each (beasts patrol there; HP is kept full) and shoots it, then takes the 1-up

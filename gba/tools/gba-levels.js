@@ -166,8 +166,8 @@ module.exports = [
     // Part 2
     b.ground(101, 105, 12); b.ember(103, 9); b.mush(103, 11); b.crack(105, 11);
     b.plat(108, 110, 10); b.ember(109, 8); b.plat(113, 115, 12); b.enemy(113, 115, 11); b.plat(118, 120, 10); b.ember(119, 8);
-    b.plat(123, 125, 8); b.ember(124, 6); b.oneup(125, 7);
-    b.ground(128, 140, 11); b.enemy(129, 134, 10); b.ember(131, 8); b.crack(135, 10); b.spikes(136, 137, 10); b.ember(136, 7); b.ember(137, 7); b.enemy(138, 140, 10);
+    b.plat(123, 125, 8); b.ember(124, 6);
+    b.ground(128, 140, 11); b.oneup(128, 10); b.enemy(129, 134, 10); b.ember(131, 8); b.crack(135, 10); b.spikes(136, 137, 10); b.ember(136, 7); b.ember(137, 7); b.enemy(138, 140, 10);
     b.ground(141, 146, 14); b.enemy(141, 145, 13); b.ember(144, 11); b.mush(143, 13); b.crack(146, 13);
     b.plat(149, 151, 12); b.enemy(149, 151, 11); b.ember(152, 9); b.plat(154, 156, 10); b.enemy(154, 156, 9); b.plat(159, 161, 12); b.ember(160, 10);
     b.ground(164, 170, 13); b.check(165, 12); b.mush(167, 12); b.crack(170, 12);
