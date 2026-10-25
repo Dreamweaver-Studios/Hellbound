@@ -550,6 +550,26 @@ const ROCKET_SCALE = 1.3;
   const diag = frames.map(f => turnDiag(f, 32, 32));   // fired at 45 degrees: nose up and right
   emit('rocket_diag', stack(diag), groupPalette(diag), { type: 'sprite', height: 32 });
 }
+// A grenade (Expert, from World 4-1 on: user request, 2026-10-25; no art supplied): an 8x8 pineapple grenade (olive body
+// with dark grooves, a highlight, a grey cap and lever, a pale pin ring), in 4 frames each a quarter turn on, for its spin
+{
+  const d = new Canvas(8, 8), r = (x, y, w, h, col) => d.rect(x, y, w, h, hex(col));
+  r(2, 2, 4, 6, '#5f7f3f'); r(1, 3, 6, 4, '#5f7f3f');   // body
+  r(1, 5, 6, 1, '#3f5a2a'); r(4, 3, 1, 5, '#3f5a2a');   // grooves
+  r(2, 3, 1, 2, '#8fb06a'); r(3, 2, 1, 1, '#8fb06a');   // highlight
+  r(3, 1, 2, 1, '#9a9a9a'); r(5, 1, 2, 1, '#6a6a6a');   // cap and lever
+  r(1, 0, 2, 1, '#d8d8d8'); r(1, 1, 1, 1, '#d8d8d8');   // pin ring
+  const frames = [0, 1, 2, 3].map(k => {
+    const c = new Canvas(8, 8);
+    for (let y = 0; y < 8; y++) for (let x = 0; x < 8; x++) {
+      let sx = x, sy = y;
+      for (let i = 0; i < k; i++) [sx, sy] = [sy, 7 - sx];   // a quarter turn each
+      const p = d.get(sx, sy); if (p[3]) c.set(x, y, p);
+    }
+    return c;
+  });
+  emit('grenade', stack(frames), groupPalette(frames), { type: 'sprite', height: 8 });
+}
 // A rocket's explosion (user request, 2026-10-19: bigger): a 64x64 fireball in 6 frames, a white-hot core swelling through
 // yellow and orange to red, then breaking up into dark smoke. A fixed noise, so builds don't change.
 {
@@ -835,7 +855,7 @@ LEVELS.forEach(({ def, L }, i) => {
     `${ns}::coins, ${len(L.coins)}, ${ns}::embers, ${len(L.embers)}, ${ns}::mushrooms, ${len(L.mush) + hardMush.length}, ${ns}::oneup_blocks, ${L.oneupBlocks.size}, ` +
     `${ns}::enemies, ${len(enemies)}, ${ns}::movers, ${len(L.movers)}, ${ns}::checks, ${len(L.checks)}, {${L.start.x}, ${L.start.y}}, ` +
     `${L.door ? `true, {${L.door.x}, ${L.door.y}}` : 'false, {0, 0}'}, ` +
-    `${L.boss ? `true, ${L.boss.gate}, {${L.boss.door.x}, ${L.boss.door.y}}` : 'false, 0, {0, 0}'}, ${def.blockCoins}, {${def.star || [-1, -1]}}, {${def.flame || [-1, -1]}}, {${def.rocket || [-1, -1]}}, {${on}}, ${L.checks.findIndex(c => c.col === def.hardDropCheck)}, ${def.hardDropMush.reduce((m, i) => m + 2 ** i, 0)}u, ${hardMush.length}, ${!! def.hardNoStar}, ${def.expertDropMush.reduce((m, i) => m + 2 ** i, 0)}u }`);
+    `${L.boss ? `true, ${L.boss.gate}, {${L.boss.door.x}, ${L.boss.door.y}}` : 'false, 0, {0, 0}'}, ${def.blockCoins}, {${def.star || [-1, -1]}}, {${def.flame || [-1, -1]}}, {${def.rocket || [-1, -1]}}, {${on}}, ${L.checks.findIndex(c => c.col === def.hardDropCheck)}, ${def.hardDropMush.reduce((m, i) => m + 2 ** i, 0)}u, ${hardMush.length}, ${!! def.hardNoStar}, ${def.expertDropMush.reduce((m, i) => m + 2 ** i, 0)}u, ${!! def.expertNoRocket}, ${!! def.expertNoStar}, {${def.expertStar || [-1, -1]}} }`);
   console.log(`${def.name}: w ${L.w}, coins ${L.coins.length}, embers ${L.embers.length}, enemies (flying included) ${on[0]} Normal, ${on[1]} Hard, ${on[2]} Expert, movers ${L.movers.length}, cracks ${L.cracks}, bg ${bgWidths[def.name]}px`);
 });
 h += `\nconstexpr level_info levels[] = {\n${infos.join(',\n')}\n};\nconstexpr int level_count = ${LEVELS.length};\n`;

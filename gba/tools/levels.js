@@ -197,6 +197,14 @@ const HARD_DROP_MUSH = { 'Underworld 1': 3, 'Underworld 2': 3, 'Underworld 3': 3
 const EXPERT_DROP_MUSH = 1;
 // Hard leaves out these levels' star block (World 4-1, user, 2026-10-24); level_info::hard_no_star
 const HARD_NO_STAR = new Set(['Underworld 1']);
+// Expert leaves out these levels' rocket launcher (World 3-2, user, 2026-10-24); level_info::expert_no_rocket
+const EXPERT_NO_ROCKET = new Set(['City 2']);
+// Expert leaves out these levels' star block (Worlds 2-3 and 3-4, user, 2026-10-24); level_info::expert_no_star
+const EXPERT_NO_STAR = new Set(['Graveyard 3', 'City 4']);
+// Expert's own star block, [col, row], where the level's (if any) is left out (World 4-1, user, 2026-10-25: "an area
+// crowded with enemies" -- 4 beasts and 2 demons within a screen on Expert, the most of any legal block spot, by the
+// star block rules); level_info::expert_star. Not a builder call, so the checkers don't see it.
+const EXPERT_STAR = { 'Underworld 1': [423, 9] };
 function hardDropMush(def, calls, n, extra = []) {
   const L = mod.exports.build({ ...def, build: b => { for (const [m, a] of calls) b[m](...a); } });
   const exit = L.boss ? L.boss.gate : Math.floor(L.door.x / 16), start = Math.floor(L.start.x / 16);
@@ -531,7 +539,7 @@ const LEVELS = ordered.map(d => {
   const build = b => { for (const [m, a] of calls) b[m](...a); };
   const hardFlyers = HARD_FLYERS[d.name] ? hardFlyerSpots({ ...d, w }, calls, flyers, HARD_FLYERS[d.name]) : [];
   return { ...d, w, calls, build, star, flame, rocket, flyers, hardSplits: HARD_SPLITS[d.name] ? hardSplits(calls, HARD_SPLITS[d.name]) : [], hardEnemies: HARD_ENEMIES[d.name] || [], hardDropCheck: hardDropCheck({ ...d, w }, calls),
-    hardBlue, hardNoStar: HARD_NO_STAR.has(d.name), hardDropMush: HARD_DROP_MUSH[d.name] ? hardDropMush({ ...d, w }, calls, HARD_DROP_MUSH[d.name], hardBlue ? [hardBlue[0]] : []) : [],
+    hardBlue, hardNoStar: HARD_NO_STAR.has(d.name), expertNoRocket: EXPERT_NO_ROCKET.has(d.name), expertNoStar: EXPERT_NO_STAR.has(d.name), expertStar: EXPERT_STAR[d.name] || null, hardDropMush: HARD_DROP_MUSH[d.name] ? hardDropMush({ ...d, w }, calls, HARD_DROP_MUSH[d.name], hardBlue ? [hardBlue[0]] : []) : [],
     expertDropMush: hardDropMush({ ...d, w }, calls, (HARD_DROP_MUSH[d.name] || 0) + EXPERT_DROP_MUSH, hardBlue ? [hardBlue[0]] : []),
     expertSplits: EXPERT_SPLITS[d.name] ? hardSplits(hardPatrols(calls, HARD_SPLITS[d.name] ? hardSplits(calls, HARD_SPLITS[d.name]) : [], HARD_ENEMIES[d.name] || []).map(a => ['enemy', a]), EXPERT_SPLITS[d.name], EXPERT_SPLIT_MIN[d.name] || 4) : [],
     expertEnemies: EXPERT_ENEMIES[d.name] || [],

@@ -37,6 +37,9 @@ struct level_info
     int hard_extra_mushrooms;       // the last this many of mushrooms[] are Hard's own (a blue one in Worlds 1-3)
     bool hard_no_star;              // Hard leaves out star_block (World 4-1, 2026-10-24)
     uint32_t expert_skip_mushrooms; // bit i: Expert leaves out mushrooms[i] (Hard's and one more red, 2026-10-24)
+    bool expert_no_rocket;          // Expert leaves out rocket_item (World 3-2, 2026-10-24)
+    bool expert_no_star;            // Expert leaves out star_block (Worlds 2-3 and 3-4, 2026-10-24)
+    point expert_star;              // Expert's own star block in place of star_block, or {-1, -1} (World 4-1, 2026-10-25)
 };
 
 #endif
