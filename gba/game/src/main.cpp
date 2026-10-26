@@ -433,6 +433,11 @@ bool hard = difficulty >= 1;
 constexpr int DIFFICULTIES = 3;
 constexpr const char* difficulty_names[DIFFICULTIES] = { "Easy", "Normal", "Hard" };   // shown names (user, 2026-10-25: were Normal/Hard/Expert; code names unchanged)
 void set_difficulty(int d) { difficulty = d; hard = d >= 1; }
+
+// Test builds can start the game at a later level (build.ps1 -StartLevel n)
+#ifndef SMHB_START_LEVEL
+#define SMHB_START_LEVEL 0
+#endif
 // A wait between shots in this difficulty: 1/1.4 of it in Hard, so shots come 40% faster
 int hard_frames(int n) { return hard ? (n * 5 + 3) / 7 : n; }
 // A boss's wait between attacks and shots: Hard's, and on Expert 1/1.1 of that, so bosses fire 10% faster (user, 2026-10-24)
@@ -2559,6 +2564,37 @@ void write_best(int v)
 }
 static_assert(BEST_EXPERT_OFFSET + sizeof(save_data) <= 64, "the best times overlap the high scores");
 
+// Expert (shown as "Hard") is locked until the game has been beaten on Hard (shown as "Normal") (user, 2026-10-26).
+// Saved in the gap after Normal's best time (tag "SMUL"). Test builds (-StartLevel, autoplay) have it unlocked.
+struct unlock_data { char tag[8]; int expert; };
+constexpr int UNLOCK_OFFSET = 16;
+static_assert(sizeof(save_data) <= UNLOCK_OFFSET && UNLOCK_OFFSET + sizeof(unlock_data) <= BEST_HARD_OFFSET, "the unlock record overlaps the best times");
+int expert_unlocked = -1;   // -1 = not read yet
+bool hs_beaten_on(int d);
+bool expert_open()
+{
+#if SMHB_START_LEVEL != 0 || (defined(SMHB_AUTOPLAY) && SMHB_SCENE != 60)   // (scene 60 tests the lock)
+    return true;
+#else
+    if(expert_unlocked < 0)
+    {
+        unlock_data u; bn::sram::read_offset(u, UNLOCK_OFFSET);
+        expert_unlocked = u.tag[0] == 'S' && u.tag[1] == 'M' && u.tag[2] == 'U' && u.tag[3] == 'L' && u.expert == 1;
+        // A save from before the lock: a Hard or Expert high score that beat the game counts
+        if(! expert_unlocked && (hs_beaten_on(1) || hs_beaten_on(2))) expert_unlocked = 1;
+    }
+    return expert_unlocked == 1;
+#endif
+}
+void unlock_expert()
+{
+    if(expert_unlocked == 1) return;
+    expert_unlocked = 1;
+    unlock_data u = { { 'S', 'M', 'U', 'L', 0, 0, 0, 0 }, 1 };
+    bn::sram::write_offset(u, UNLOCK_OFFSET);
+}
+bool difficulty_open(int d) { return d < 2 || expert_open(); }
+
 // High scores (user, 2026-10-22): the top 5 runs with arcade-style initials and how far each got, saved after the best
 // time (which stays where it was). A run ends at the Congratulations screen or by leaving game over for the title;
 // retrying a level after game over carries the run on, so it isn't recorded until then.
@@ -2592,6 +2628,13 @@ void hs_load()
 }
 // This run's table (the difficulty being played)
 hs_table& hs_now() { hs_load(); return hs_tables[difficulty]; }
+// Whether a run on difficulty d that beat the game made its table
+bool hs_beaten_on(int d)
+{
+    hs_load();
+    for(const hs_entry& e : hs_tables[d].e) if(e.score > 0 && e.level == level_count) return true;
+    return false;
+}
 // The place a score would take (0-based), or -1 if it doesn't make the table; ties go below the older score
 int hs_rank(int score)
 {
@@ -2740,15 +2783,18 @@ void draw_difficulty()
     overlay_line(-44, "SELECT DIFFICULTY", true);
     for(int d = 0; d < DIFFICULTIES; ++d)
     {
-        bn::string<16> item = difficulty_names[d];
+        bn::string<24> item = difficulty_names[d];
+        if(! difficulty_open(d)) item += " (locked)";
         if(d == difficulty) { item = "> "; item += difficulty_names[d]; item += " <"; }
         overlay_line(-22 + d * 16, item);
     }
+    if(! difficulty_open(2)) overlay_line(30, "Beat the game on Normal to unlock Hard.");
     overlay_line(54, "UP/DOWN: choose     A: start     B: back");
 }
 void show_difficulty()
 {
     state = state_t::difficulty;
+    if(! difficulty_open(difficulty)) set_difficulty(1);
     set_dim(true);
     draw_difficulty();
 }
@@ -2756,7 +2802,10 @@ void update_difficulty()
 {
     if(K.up_pressed || K.down_pressed)
     {
-        set_difficulty((difficulty + (K.down_pressed ? 1 : DIFFICULTIES - 1)) % DIFFICULTIES);
+        // (the cursor skips a locked difficulty)
+        int d = difficulty;
+        do d = (d + (K.down_pressed ? 1 : DIFFICULTIES - 1)) % DIFFICULTIES; while(! difficulty_open(d));
+        set_difficulty(d);
         sfx::letter(); draw_difficulty();
     }
     else if(K.b_pressed) show_title(true);
@@ -2808,6 +2857,7 @@ void clear_level()
     {
         // Beating the last level shows the Congratulations screen, with ember fireworks and the course-clear tune
         state = state_t::congrats; set_dim(true);
+        if(difficulty >= 1) unlock_expert();   // beating it on Hard (shown "Normal") opens Expert (shown "Hard")
         sfx::course_clear();
         overlay_line(-52, "WORLD 4 CLEARED");   // the user's wording (2026-10-16): the last level is World 4-4
         overlay_line(-36, "CONGRATULATIONS!", true);
@@ -3583,7 +3633,7 @@ void read_keys()
     if(f == 150)
     {
         static constexpr int scene_level[] = { 0, 0, 0, 4, 15, 15, 4, 0, 4, 4, 1, 2, 3, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 0, 15, 2, 7, 15, 1, 4, 9, 12, 1, 2, 4, 12, 4, 3, 13, 2, 1, 0, 0, 4, 8, 0, 3, 0, 7, 12, 0, 0, 4, 6, 11, 0, 12, 11, 0, 6 };   // level indexes: 4 Graveyard, 8 City, 12 World 4-1, 15 Hell
-#if SMHB_SCENE == 42 || SMHB_SCENE == 47 || SMHB_SCENE == 58
+#if SMHB_SCENE == 42 || SMHB_SCENE == 47 || SMHB_SCENE == 58 || SMHB_SCENE == 60
         return;   // this one starts from the title
 #endif   // level indexes: 4 Graveyard, 8 City, 12 World 4-1, 15 Hell
         start_game(scene_level[SMHB_SCENE]);
@@ -3823,6 +3873,14 @@ void read_keys()
     // 212-214, row 12): both empty on Normal and Hard
     if(g == 2) teleport(208, 10);
     p.hp = MAX_HP;
+#elif SMHB_SCENE == 60
+    // Hard (code Expert) locked (2026-10-26): Start Game, DOWN twice (Easy -> Normal -> skips Hard -> Easy); then unlocked
+    // as if the game had been beaten on Normal, DOWN twice more lands on Hard
+    if(g == 2) expert_unlocked = 0;
+    if(g == 20) K.a_pressed = true;
+    if(g == 80 || g == 140) K.down_pressed = true;
+    if(g == 200) { unlock_expert(); draw_difficulty(); }
+    if(g == 260 || g == 320) K.down_pressed = true;
 #elif SMHB_SCENE == 47
     // The title menu: DOWN to Controls, A (captures about 1 s later), B back, DOWN to High Scores, A, B back, then DOWN
     // to Credits and A
@@ -3918,11 +3976,6 @@ void tick()
 }
 
 }
-
-// Test builds can start the game at a later level (build.ps1 -StartLevel n)
-#ifndef SMHB_START_LEVEL
-#define SMHB_START_LEVEL 0
-#endif
 
 // The startup screens, before the title: a full-screen picture fades in from black, holds and fades out. A or START
 // skips ahead to the fade-out (from wherever the fade-in had got to).
