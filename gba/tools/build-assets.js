@@ -7,7 +7,6 @@ const fs = require('fs'), path = require('path'), os = require('os'), { PNG } = 
 const WEB = path.resolve(__dirname, '../..');                       // the web game's files (this project's root)
 const GAME = path.resolve(__dirname, '../game');
 const OUT_G = path.join(GAME, 'graphics'), OUT_A = path.join(GAME, 'audio'), OUT_I = path.join(GAME, 'include');
-const SHEET = path.resolve(WEB, '../Super Mario Run and Gun/Sprites/super_mario_world_gun_sprites_by_goldenfranko_d1d7uwj.png');
 for (const d of [OUT_G, OUT_A, OUT_I]) fs.mkdirSync(d, { recursive: true });
 
 // ---------- RGBA canvas ----------
@@ -322,55 +321,142 @@ const avg = im => { let r = 0, g = 0, b = 0, n = 0; for (let i = 0; i < im.d.len
 const skies = { jungle: SHADE.jungle(plx(1).get(0, 0)), grave: SHADE.grave(web('bg/grave/background-0.png').get(0, 0)), hell: SHADE.hell(avg(web('bg/cave/00.png'))),
   city: SHADE.city(cityLayer('back').get(0, 0)) };
 
-// ---------- Mario (Goldenfrank0's 1x sheet) ----------
-const sheet = loadPng(SHEET);
-const isWhite = (x, y) => { const p = sheet.get(x, y); return p[0] > 240 && p[1] > 240 && p[2] > 240; };
-const panel = { x0: 11, y0: 101, x1: 115, y1: 167 };
-const bgMask = new Set(), st = [];
-for (let x = panel.x0; x <= panel.x1; x++) st.push([x, panel.y0], [x, panel.y1]);
-for (let y = panel.y0; y <= panel.y1; y++) st.push([panel.x0, y], [panel.x1, y]);
-while (st.length) { const [x, y] = st.pop(); const k = x + ',' + y; if (x < panel.x0 || y < panel.y0 || x > panel.x1 || y > panel.y1 || bgMask.has(k) || !isWhite(x, y)) continue; bgMask.add(k); st.push([x + 1, y], [x - 1, y], [x, y + 1], [x, y - 1]); }
-const cut = (x, y, w, h) => { const c = new Canvas(w, h); for (let yy = 0; yy < h; yy++) for (let xx = 0; xx < w; xx++) if (!bgMask.has((x + xx) + ',' + (y + yy))) c.set(xx, yy, sheet.get(x + xx, y + yy)); return c; };
-const MF = [cut(25, 107, 29, 28), cut(55, 107, 29, 28), cut(85, 107, 29, 27)];  // stand, run A, run B (face right)
-// The front eye has no outline at the face edge, so the background flood leaks into both eyes' whites and the cap's
-// highlight. Put those white pixels back (same place in all three frames).
-const HEAD_WHITES = [[10, 2], [7, 6], [8, 6], [10, 6], [11, 6], [7, 7], [11, 7], [12, 7], [7, 8], [11, 8]];
-[25, 55, 85].forEach((fx, i) => { for (const [x, y] of HEAD_WHITES) MF[i].set(x, y, sheet.get(fx + x, 107 + y)); });
-// 64x64 frames (32x32 until the aiming-up art, 2026-10-20, which is taller and reaches further left): body centre on
-// column 24, feet on the bottom row (the GBA code relies on both)
-const marioFrame = src => { const c = new Canvas(64, 64); c.blit(src, 0, 0, src.w, src.h, 16, 64 - src.h); return c; };
-// Crouch: head, arms and gun (rows 0-19) as they are, legs folded into rows 21, 24 and 27
-const crouchSrc = new Canvas(29, 23); crouchSrc.blit(MF[0], 0, 0, 29, 20, 0, 0); [21, 24, 27].forEach((r, i) => crouchSrc.blit(MF[0], 0, r, 29, 1, 0, 20 + i));
-// Aiming up and at 45 degrees: the user's art (2026-10-20), which replaced poses made by turning the sheet's gun. Frames
-// 4-6 (stand, run A, run B aiming up) are all "pointing upward" and frames 7-9 (the same at 45 degrees) are all
-// "45-degrees". Both are smoothed art at about twice the sheet's size (57x81 and 57x74), so they're point-sampled at
-// USER_SCALE (crisper than averaging, which blurred the face), with the legs centred on column 24, and drawn in the sheet
-// frames' palette (see below). The barrel's tip (the art's highest point) is logged: muzzle_x/muzzle_y in main.cpp put
-// the shots there.
-const USER_ART = path.resolve(WEB, '../Super Mario Run and Gun/Sprites/Mario with gun'), USER_SCALE = 0.5;
-const userFrame = file => {
-  const src = loadPng(path.join(USER_ART, file)), art = new Canvas(Math.round(src.w * USER_SCALE), Math.round(src.h * USER_SCALE));
-  for (let y = 0; y < art.h; y++) for (let x = 0; x < art.w; x++) { const p = src.get(Math.floor((x + 0.5) / USER_SCALE), Math.floor((y + 0.5) / USER_SCALE)); if (p[3] >= 128) art.set(x, y, [p[0], p[1], p[2], 255]); }
-  let top = art.h, sx = 0, n = 0;
-  for (let y = 0; y < art.h; y++) for (let x = 0; x < art.w; x++) if (art.get(x, y)[3] >= 128) { if (y < top) top = y; if (y >= art.h - 6) { sx += x; n++; } }
-  const legs = Math.round(sx / n), f = new Canvas(64, 64), dx = 24 - legs;
+// ---------- The hero, Hellfire (the user's soldier, 2026-10-29; Mario until then) ----------
+// "new sprites" (the user's, 2026-10-30; "Military Character sprites" until then): idle, a 6-frame walk sheet and a 6-frame
+// jump sheet (3x2 grids of 128 px cells, jump's second row in the air), "pointing upward" / "straight up", the 45-degree
+// pose and prone, per weapon. Every frame is cropped to its figure and area-averaged at one scale: the one that makes the
+// 128-px idle poses HERO_H tall. Frames are 64x64: legs (the bottom 6 rows' middle) on column 24, feet on the bottom row.
+// One 15-colour palette for all of them. The rifle's tip in each frame goes to hero_frames.h, for the muzzle.
+// Frames: 0 idle, 1-6 walk, 7-9 in the air (rising, top, falling), 10 prone, 11 aiming up, 12 aiming at 45 degrees.
+// HERO_H: the idle pose's height in px (user, 2026-10-29: 42, then 40; the standing hitbox, main.cpp's PH, matches it)
+// (The flamethrower's idle pose sets the scale for every weapon's frames; each idle pose is scaled to exactly HERO_H.)
+const HERO_ART = path.resolve(WEB, '../Super Mario Run and Gun/Non-Mario Build/new sprites'), HERO_H = 40;
+const heroBox = src => {
+  let x0 = src.w, y0 = src.h, x1 = -1, y1 = -1;
+  for (let y = 0; y < src.h; y++) for (let x = 0; x < src.w; x++) if (src.get(x, y)[3] >= 128) { x0 = Math.min(x0, x); x1 = Math.max(x1, x); y0 = Math.min(y0, y); y1 = Math.max(y1, y); }
+  const c = new Canvas(x1 - x0 + 1, y1 - y0 + 1); c.blit(src, x0, y0, c.w, c.h, 0, 0); return c;
+};
+const HERO_K = HERO_H / heroBox(loadPng(path.join(HERO_ART, 'idle (with flame thrower).png'))).h;
+const heroTips = [];
+// tip: 'ahead' = the rightmost pixel, 'up' = the highest, 'diag' = the furthest up and right (largest x - y)
+// k: the scale (HERO_K unless a pose has its own size, like prone); W, B: the canvas's width and the body centre's column
+// (64 and 24 for the sheet's frames; prone uses 128 and 64, see below)
+const heroFrame = (src, tip, k = HERO_K, W = 64, B = 24) => {
+  const crop = heroBox(src), art = downscale(crop, Math.max(1, Math.round(crop.w * k)), Math.max(1, Math.round(crop.h * k)));
+  let sx = 0, n = 0;
+  for (let y = art.h - 6; y < art.h; y++) for (let x = 0; x < art.w; x++) if (art.get(x, y)[3] >= 128) { sx += x; n++; }
+  const legs = Math.round(sx / n), f = new Canvas(W, 64), dx = B - legs;
+  if (dx < 0 || dx + art.w > W || art.h > 64) console.warn(`WARNING hero frame ${art.w}x${art.h} at x ${dx} doesn't fit its ${W}x64 frame (cut off)`);
   f.blit(art, 0, 0, art.w, art.h, dx, 64 - art.h);
-  let tx = 0, tn = 0; for (let x = 0; x < art.w; x++) if (art.get(x, top)[3] >= 128) { tx += x; tn++; }
-  console.log(`mario ${file}: ${art.w}x${art.h}, legs at art col ${legs}, barrel tip ${(tx / tn + dx + 0.5 - 24).toFixed(1)} px ahead of the body centre, ${art.h - top} px above the feet`);
+  f.artX = dx; f.artW = art.w; f.artH = art.h;
+  const score = (x, y) => tip === 'ahead' ? x * 1000 - Math.abs(y - art.h / 2) : tip === 'up' ? -y * 1000 - Math.abs(x - legs) : x - y;
+  let best = -Infinity, tx = 0, ty = 0;
+  for (let y = 0; y < art.h; y++) for (let x = 0; x < art.w; x++) if (art.get(x, y)[3] >= 128 && score(x, y) > best) { best = score(x, y); tx = x; ty = y; }
+  heroTips.push([tx + dx + 0.5 - B, art.h - ty - 0.5]);   // ahead of the body centre, above the feet (px)
   return f;
 };
-const upFrame = userFrame('pointing upward.png'), diagFrame = userFrame('45-degrees.png');
-// The palette comes from the sheet's frames only, so the user's art (about 1500 colours each) is mapped onto Mario's own
-// 15 colours and doesn't change how the other frames look
-const sheetFrames = [...MF.map(marioFrame), marioFrame(crouchSrc)];
-const marioFrames = [...sheetFrames, upFrame, upFrame, upFrame, diagFrame, diagFrame, diagFrame];
-emit('mario', stack(marioFrames), groupPalette(sheetFrames), { type: 'sprite', height: 64 });
+// One sheet per weapon (user, same day: "switch his sprite to the weapon he is carrying"), each with its own palette:
+// hero (rifle), hero_flame, hero_rocket and hero_grenade. The walk and jump sheets are cut into their 128 px cells, left to
+// right, top to bottom (figures touch the cells' edges, so empty rows and columns can't be relied on).
+const heroGrid = file => {
+  const src = loadPng(path.join(HERO_ART, file)), out = [];
+  for (let y = 0; y < src.h; y += 128) for (let x = 0; x < src.w; x += 128) { const c = new Canvas(128, 128); c.blit(src, x, y, 128, 128, 0, 0); out.push(c); }
+  return out;
+};
+// [sheet, file suffix, up pose, 45-degree pose, prone pose]. He
+// lies prone instead of crouching (user, 2026-10-29), at its own scale: HERO_PRONE_H
+// tall (user, same day: 20 px; before that 15, 36 px long, and 23 tall), and main.cpp's PRONE_H hitbox matches it. It's
+// laid out on a 128x64 canvas (body centre on column 64). If it fits a 64x64 frame (body centre on 24) it goes in the
+// sheet's slot; if not (longer than a GBA sprite; user: "two sprites, keep shape") the slot is left empty, HERO_PRONE_WIDE
+// is 1 and main.cpp draws `hero_prone`'s two 64x64 halves side by side. hero_prone is emitted either way.
+// The flamethrower and the rocket launcher lie prone too (user, same day: "prone (with flamethrower).png", "prone (with
+// rocket launcher).png"), at the same height; each prone
+// weapon gets its own <sheet>_prone halves, wide flag and picture columns (per sheet in hero_frames.h).
+// Since 2026-10-30 (user): each weapon's prone pose is scaled to HERO_PRONE_W px long, same proportions, so its height
+// follows from the art; main.cpp's PRONE_H hitbox is set separately (23).
+const HERO_PRONE_W = 64;
+let heroProneWide = 0, heroProneX = [0, 0];
+const heroProneSets = [];   // per sheet: [wide, x0, x1]
+const HERO_SETS = [
+  ["hero", "with rifle", "pointing upward (with rifle)", "45-degree angle (with rifle)", "prone (with rifle)"],
+  // (last entry: this sheet's straight-up pose is scaled to that height, user 2026-10-31; the others use HERO_K)
+  ["hero_flame", "with flame thrower", "straight up (flame thrower)", "45-degree angle (flame thrower)", "prone (with flamethrower)", 44],
+  ["hero_rocket", "with rocket launcher", "straight up (rocket launcher)", "45-degree angle (rocket launcher)", "prone (with rocket launcher)"]];
+const heroTipSets = []; let walkN = 0;
+for (const [name, w, up, diag, low, upH] of HERO_SETS) {
+  heroTips.length = 0; heroProneWide = 0; heroProneX = [0, 0];
+  const walk = heroGrid(`walk (${w}).png`), jump = heroGrid(`jump (${w}).png`);
+  let prone = null;
+  const lowFrame = () => {
+    const src = loadPng(path.join(HERO_ART, low + '.png'));
+    prone = heroFrame(src, "ahead", HERO_PRONE_W / heroBox(src).w, 128, 64);
+    const slot = new Canvas(64, 64);
+    // In a 64x64 frame the body centre is column 24, so the frame shows the wide canvas's columns 40-103
+    heroProneX = [prone.artX - 64, prone.artX + prone.artW - 64];
+    heroProneWide = prone.artX >= 40 && prone.artX + prone.artW <= 104 ? 0 : 1;
+    if (!heroProneWide) slot.blit(prone, 40, 0, 64, 64, 0, 0);
+    console.log(`${name} prone: ${prone.artW}x${prone.artH}, ${heroProneWide ? 'two sprites' : 'one sprite'}`);
+    return slot;
+  };
+  if (walk.length !== 6 || jump.length !== 6) throw new Error(`${name}: ${walk.length} walk / ${jump.length} jump frames`);
+  walkN = walk.length;
+  const idleSrc = loadPng(path.join(HERO_ART, `idle (${w}).png`)), upSrc = loadPng(path.join(HERO_ART, up + ".png"));
+  const frames = [heroFrame(idleSrc, "ahead", HERO_H / heroBox(idleSrc).h), ...walk.map(c => heroFrame(c, "ahead")),
+    ...[3, 4, 5].map(i => heroFrame(jump[i], "ahead")), lowFrame(),
+    heroFrame(upSrc, "up", upH ? upH / heroBox(upSrc).h : HERO_K), heroFrame(loadPng(path.join(HERO_ART, diag + ".png")), "diag")];
+  emit(name, stack(frames), groupPalette(frames), { type: "sprite", height: 64 });
+  if (prone) {
+    const halves = [0, 64].map(x => { const c = new Canvas(64, 64); c.blit(prone, x, 0, 64, 64, 0, 0); return c; });
+    emit(`${name}_prone`, stack(halves), groupPalette(halves), { type: "sprite", height: 64 });
+  }
+  const hs = frames.map(f => { for (let y = 0; y < 64; y++) for (let x = 0; x < 64; x++) if (f.get(x, y)[3] >= 128) return 64 - y; return 0; });
+  console.log(`${name}: heights ${hs.join(" ")}; tips ${heroTips.map(t => t[0].toFixed(1) + "/" + t[1].toFixed(1)).join(" ")}`);
+  heroTipSets.push(heroTips.slice());
+  heroProneSets.push([heroProneWide, heroProneX[0], heroProneX[1]]);
+}
+// hero_grenade: throwing a grenade by hand (user, 2026-10-29; 3 frames since 2026-10-30, the "grenade animation" folder):
+// hand at the hip, raised, then thrown (arm out ahead). Same scale and layout as the other sheets; the last frame's hand
+// (its rightmost pixel) is the "tip" the grenade leaves from. Its tip rows are padded to
+// HERO_FRAMES like the others.
+{
+  heroTips.length = 0;
+  const frames = [1, 2, 3].map(i => heroFrame(loadPng(path.join(HERO_ART, `grenade animation/grenade throw (frame ${i}).png`)), "ahead"));
+  emit('hero_grenade', stack(frames), groupPalette(frames), { type: "sprite", height: 64 });
+  const hs = frames.map(f => { for (let y = 0; y < 64; y++) for (let x = 0; x < 64; x++) if (f.get(x, y)[3] >= 128) return 64 - y; return 0; });
+  console.log(`hero_grenade (throw): heights ${hs.join(" ")}; tips ${heroTips.map(t => t[0].toFixed(1) + "/" + t[1].toFixed(1)).join(" ")}`);
+  const tips = heroTips.slice();
+  while (tips.length < heroTipSets[0].length) tips.push([0, 0]);
+  heroTipSets.push(tips);
+}
+const tipRows = k => heroTipSets.map(t => `{ ${t.map(v => Math.round(v[k] * 2)).join(', ')} }`).join(',\n    ');
+fs.writeFileSync(path.join(OUT_I, 'hero_frames.h'), [
+  '// Generated by build-assets.js: the hero\'s frames and where the weapon\'s tip is in each',
+  '#ifndef HERO_FRAMES_H', '#define HERO_FRAMES_H',
+  `constexpr int HERO_IDLE = 0, HERO_WALK = 1, HERO_WALK_N = ${walkN}, HERO_AIR = ${1 + walkN}, HERO_CROUCH = ${4 + walkN}, HERO_UP = ${5 + walkN}, HERO_DIAG = ${6 + walkN}, HERO_FRAMES = ${7 + walkN};`,
+  '// The sheets, in this order: hero (rifle), hero_flame, hero_rocket, hero_grenade (the throw: frames 0-2 only)',
+  'constexpr int HERO_RIFLE = 0, HERO_FLAME = 1, HERO_ROCKET = 2, HERO_GRENADE = 3, HERO_THROW_N = 3;',
+  '// Per weapon sheet (rifle, flamethrower, rocket launcher): whether the prone pose is',
+  '// too long for one sprite (then <sheet>_prone\'s two halves are drawn, body centre on the 128-px picture\'s column 64), and',
+  '// the prone picture\'s columns from the body centre facing right (the last one exclusive): boots to the weapon\'s tip',
+  `constexpr bool hero_prone_wide[3] = { ${heroProneSets.map(s => s[0] ? 'true' : 'false').join(', ')} };`,
+  `constexpr int hero_prone_x0[3] = { ${heroProneSets.map(s => s[1]).join(', ')} }, hero_prone_x1[3] = { ${heroProneSets.map(s => s[2]).join(', ')} };`,
+  '// In half pixels: ahead of the body centre, and above the feet',
+  `constexpr int hero_tip_x2[4][HERO_FRAMES] = {\n    ${tipRows(0)} };`,
+  `constexpr int hero_tip_y2[4][HERO_FRAMES] = {\n    ${tipRows(1)} };`,
+  '#endif', ''].join('\n'));
 
-// ---------- Aliens (Warped, ansimuz): 64x64 frames, art column 28 on the centre, feet on the bottom ----------
+// ---------- Aliens (Warped, ansimuz): 64x64 frames, art column 28 on the centre, feet on the bottom, scaled (ALIEN_H) ----------
 const alienFrames = [], alienArt = [];
 for (let i = 1; i <= 6; i++) alienArt.push([web(`sprites/alien/walk${i}.png`), 38]);
 for (let i = 1; i <= 4; i++) alienArt.push([web(`sprites/alien/idle${i}.png`), 45]);
-for (const [im, feet] of alienArt) { const c = new Canvas(64, 64); c.blit(im, 0, 0, im.w, Math.min(im.h, feet), 32 - 28, 64 - feet); alienFrames.push(c); }
+// One scale for every frame, so the tallest is ALIEN_H px (user, 2026-10-29: 32; the art's own was 30); nearest-neighbour
+const ALIEN_H = 32;
+const artTop = ([im, feet]) => { for (let y = 0; y < Math.min(im.h, feet); y++) for (let x = 0; x < im.w; x++) if (im.get(x, y)[3] >= 128) return y; return feet; };
+const ALIEN_K = ALIEN_H / Math.max(...alienArt.map(a => Math.min(a[0].h, a[1]) - artTop(a)));
+for (const [im, feet] of alienArt) {
+  const h = Math.min(im.h, feet), dw = Math.round(im.w * ALIEN_K), dh = Math.round(h * ALIEN_K), c = new Canvas(64, 64);
+  c.blitScaled(im, 0, 0, im.w, h, Math.round(32 - 28 * ALIEN_K), 64 - dh, dw, dh); alienFrames.push(c);
+}
 const alienPal = groupPalette(alienFrames);
 emit('alien', stack(alienFrames), alienPal, { type: 'sprite', height: 64 });
 emitFlashPalette('alien_flash', alienPal, 0.55);
@@ -379,8 +465,15 @@ emitFlashPalette('alien_flash', alienPal, 0.55);
 // (1.25x, the web game's 2.5x on its 2x canvas, until the user had them made 10% smaller, 2026-10-20; the enemy data's shrink()
 // shrinks their hitboxes to match)
 // 64x64 frames: walk 1-6 then rise 1-11. Art faces right; its body centre (column 15) lands on the frame centre, feet on the bottom.
-const reaperFrames = [...[1, 2, 3, 4, 5, 6].map(i => `walk${i}`), ...[...Array(11)].map((_, i) => `rise${i + 1}`)].map(n => {
-  const im = web(`sprites/death/${n}.png`), c = new Canvas(64, 64); c.blitScaled(im, 0, 0, 32, 48, 15, 10, 36, 54); return c; });
+// Since 2026-10-29 (user) one scale makes the tallest walk frame REAPER_H px (33; it was 36 at 1.125x); the rise frames
+// share it. Nearest-neighbour.
+const REAPER_H = 33;
+const reaperArt = [...[1, 2, 3, 4, 5, 6].map(i => `walk${i}`), ...[...Array(11)].map((_, i) => `rise${i + 1}`)].map(n => web(`sprites/death/${n}.png`));
+const reaperTop = im => { for (let y = 0; y < 48; y++) for (let x = 0; x < 32; x++) if (im.get(x, y)[3] >= 128) return y; return 48; };
+const REAPER_K = REAPER_H / Math.max(...reaperArt.slice(0, 6).map(im => 48 - reaperTop(im)));
+const reaperFrames = reaperArt.map(im => {
+  const dw = Math.round(32 * REAPER_K), dh = Math.round(48 * REAPER_K), c = new Canvas(64, 64);
+  c.blitScaled(im, 0, 0, 32, 48, Math.round(32 - 15 * REAPER_K), 64 - dh, dw, dh); return c; });
 const reaperPal = groupPalette(reaperFrames);
 emit('reaper', stack(reaperFrames), reaperPal, { type: 'sprite', height: 64 });
 emitFlashPalette('reaper_flash', reaperPal, 0.5);
@@ -389,16 +482,30 @@ emitFlashPalette('reaper_flash', reaperPal, 0.5);
 // The DemonAttack frames (312x220) at 0.18x (0.3x until the user had them made 40% smaller, 2026-10-20), a little
 // brighter: frames 1-6 (a wing beat) to fly, frame 7 (wings raised) to attack. A 356 px square around the body's middle
 // (art 157, 128) is area-downscaled to 64x64, so the body is on the sprite's centre. The art faces left.
+// Since 2026-10-29 (user) the square's size is searched for so the tallest wing-beat frame is DEMON_H px (16, then 24; it was 21).
+let DEMON_BOX;   // (set below)
 {
-  const DEMON = path.join(GOTHIC, 'Characters/demon-Files/Sprites/DemonAttack'), R = Math.round(64 / 0.18), frames = [];
-  for (let i = 1; i <= 7; i++) {
-    const im = loadPng(path.join(DEMON, `frame${i}.png`)), crop = new Canvas(R, R);
+  const DEMON = path.join(GOTHIC, 'Characters/demon-Files/Sprites/DemonAttack'), DEMON_H = 24;
+  const ims = [1, 2, 3, 4, 5, 6, 7].map(i => loadPng(path.join(DEMON, `frame${i}.png`)));
+  const draw = (im, R) => {
+    const crop = new Canvas(R, R);
     crop.blit(im, 0, 0, im.w, im.h, Math.round(R / 2 - 157), Math.round(R / 2 - 128));
-    const f = downscale(crop, 64, 64);
+    return downscale(crop, 64, 64);
+  };
+  const tall = f => { let top = -1, bot = -1; for (let y = 0; y < 64; y++) for (let x = 0; x < 64; x++) if (f.get(x, y)[3] >= 128) { if (top < 0) top = y; bot = y; } return top < 0 ? 0 : bot - top + 1; };
+  let R = 160;   // (the smallest square tried: art about 2.5x the original 0.18x)
+  while (Math.max(...ims.slice(0, 6).map(im => tall(draw(im, R)))) > DEMON_H) R += 2;
+  const frames = ims.map(im => {
+    const f = draw(im, R);
     // lifted (gamma 0.7), as the near-black art was lost against the dark graveyard
     for (let i = 0; i < f.d.length; i += 4) for (let c = 0; c < 3; c++) f.d[i + c] = Math.round(255 * Math.pow(f.d[i + c] / 255, 0.7));
-    frames.push(f);
-  }
+    return f;
+  });
+  // The hitbox matches the drawn wing beat (user, 2026-10-29; was 12x14): the box around frames 1-6. dx, dy: the
+  // sprite's centre from the box's centre, art facing left (main.cpp mirrors dx when it faces right)
+  let l = 64, r = -1, t = 64, b = -1;
+  frames.slice(0, 6).forEach(f => { for (let y = 0; y < 64; y++) for (let x = 0; x < 64; x++) if (f.get(x, y)[3] >= 128) { l = Math.min(l, x); r = Math.max(r, x); t = Math.min(t, y); b = Math.max(b, y); } });
+  DEMON_BOX = { w: r - l + 1, h: b - t + 1, dx: 32 - (l + r + 1) / 2, dy: 32 - (t + b + 1) / 2 };
   const pal = groupPalette(frames);
   emit('demon', stack(frames), pal, { type: 'sprite', height: 64 });
   emitFlashPalette('demon_flash', pal, 0.6);
@@ -406,13 +513,14 @@ emitFlashPalette('reaper_flash', reaperPal, 0.5);
 
 // ---------- Mechs (Warped "mech-unit", ansimuz): World 3-1's enemy; a 10-frame walk, 96x80 frames ----------
 // The art (60x66 over all frames, at x 15-74, y 14-79) at 0.5625x (first 0.75x; the user had it made 25% smaller),
-// centred, feet on the bottom row of a 64x64 frame. The hitbox stays the aliens' 32x28, which still fits inside it.
-const mechFrames = [];
+// centred, feet on the bottom row of a 64x64 frame. MECH_H tall (user, 2026-10-30: 45; 34 from 2026-10-29, 37 before that), the width in
+// proportion; the hitbox is MECH_W x MECH_H too (user, 2026-10-30; aliens' 32 wide until then)
+const mechFrames = [], MECH_H = 45, MECH_W = Math.round(60 * MECH_H / 66);
 {
   const strip = loadPng(path.join(SYNTH, 'Characters/mech-unit/spritesheet/mech-unit.png'));
   for (let i = 0; i < 10; i++) {
     const art = new Canvas(60, 66); art.blit(strip, i * 96 + 15, 14, 60, 66, 0, 0);
-    const small = downscale(art, 34, 37), c = new Canvas(64, 64); c.blit(small, 0, 0, 34, 37, 32 - 17, 64 - 37); mechFrames.push(c);
+    const small = downscale(art, MECH_W, MECH_H), c = new Canvas(64, 64); c.blit(small, 0, 0, MECH_W, MECH_H, 32 - Math.round(MECH_W / 2), 64 - MECH_H); mechFrames.push(c);
   }
 }
 const mechPal = groupPalette(mechFrames);
@@ -423,7 +531,34 @@ emitFlashPalette('mech_flash', mechPal, 0.55);
 // Frames: idle 1-6, breath 1-4, burn 1-6; each frame is two sprites (top, bottom). Art faces left, body centre column 40.
 const beastNames = [...[1, 2, 3, 4, 5, 6].map(i => `idle${i}`), ...[1, 2, 3, 4].map(i => `breath${i}`), ...[1, 2, 3, 4, 5, 6].map(i => `burn${i}`)];
 const beastHalves = [];
-for (const n of beastNames) { const im = web(`sprites/beast/${n}.png`), c = new Canvas(64, 128); c.blitScaled(im, 0, 0, 80, 160, 2, 8, 60, 120); beastHalves.push(...cells64(c)); }
+// Since 2026-10-29 (user) one scale makes the tallest idle/breath frame BEAST_H px (37, then 42, then 45 on 2026-10-30; it was 47 at 0.75x); feet stay on
+// the bottom, body centre on column 32
+const BEAST_H = 45, beastIms = beastNames.map(n => web(`sprites/beast/${n}.png`));
+// (the drawn size of the 80x160 art is searched for, measured on the drawn frames, since nearest-neighbour sampling
+// skips some art rows: the smallest that makes the tallest frame BEAST_H, else the tallest under it)
+const beastDraw = (im, dh) => {
+  const k = dh / 160, dw = Math.round(80 * k), c = new Canvas(64, 128);
+  c.blitScaled(im, 0, 0, 80, 160, Math.round(32 - 40 * k), 128 - dh, dw, dh); return c; };
+// (its body's height: from the first of 3 rows in a row with art in them, so a detached spark above it doesn't count)
+const drawnH = c => {
+  const row = y => { for (let x = 0; x < 64; x++) if (c.get(x, y)[3] >= 128) return true; return false; };
+  for (let y = 0; y < 126; y++) if (row(y) && row(y + 1) && row(y + 2)) return 128 - y;
+  return 0;
+};
+let beastDh = 40;
+for (let dh = 40; dh <= 128; dh++) {
+  const h = Math.max(...beastIms.slice(0, 10).map(im => drawnH(beastDraw(im, dh))));
+  if (h <= BEAST_H) beastDh = dh;
+  if (h >= BEAST_H) break;
+}
+for (const im of beastIms) beastHalves.push(...cells64(beastDraw(im, beastDh)));
+// The hitbox's width matches the idle frames' (user, 2026-10-29; 23 in the web game): the widest span of art over idle 1-6
+let BEAST_W;
+{
+  let l = 64, r = -1;
+  beastIms.slice(0, 6).forEach(im => { const c = beastDraw(im, beastDh); for (let y = 0; y < 128; y++) for (let x = 0; x < 64; x++) if (c.get(x, y)[3] >= 128) { l = Math.min(l, x); r = Math.max(r, x); } });
+  BEAST_W = r - l + 1;
+}
 const beastPal = groupPalette(beastHalves);
 emit('beast', stack(beastHalves), beastPal, { type: 'sprite', height: 64 });
 emitFlashPalette('beast_flash', beastPal, 0.7);
@@ -496,17 +631,16 @@ emitFlashPalette('beast_flash', beastPal, 0.7);
 }
 
 // ---------- Coin (spin frames) and 1-up ----------
-const coinSrc = web('sprites/coin.png');
+// Since 2026-10-29 (user) every coin is drawn as the user's gem.png (34x50, about the coin's shape), same size and spin
+const coinSrc = loadPng(path.resolve(WEB, '../Super Mario Run and Gun/Non-Mario Build/gem.png'));
 const coinFrames = [7, 6, 5, 3, 2].map(w => { const s = downscale(coinSrc, w, 10), c = new Canvas(8, 16); c.blit(s, 0, 0, w, 10, Math.floor((8 - w) / 2), 3); return c; });
 emit('coin', stack(coinFrames), groupPalette(coinFrames), { type: 'sprite', height: 16 });
-const one = downscale(web('sprites/oneup.png'), 14, 14), oneC = new Canvas(16, 16); oneC.blit(one, 0, 0, 14, 14, 1, 1);
-emit('oneup', oneC, groupPalette([oneC]), { type: 'sprite' });
-// The star (user request, 2026-10-18): the user's star.png is 16x15 pixel art drawn at 31x (31x31 cells, 9 px in from the
-// left, 15 down), so each cell's centre is read back at 1x, onto a 16x16 sprite one row down. Its flashing is done in the
-// game, on the palette (see Star in main.cpp).
+// The star (user request, 2026-10-18). Since 2026-10-29 (user) it's drawn as the user's invincibility.png (29x50, a blue
+// potion), area-averaged to 9x15 and centred where the 16x15 star was, one row down in the 16x16 sprite. (Before: star.png,
+// 16x15 pixel art drawn at 31x, read back cell by cell.) Its flashing is done in the game, on the palette (see Star in main.cpp).
 {
-  const src = loadPng(path.resolve(WEB, '../Super Mario Run and Gun/Sprites/star.png')), c = new Canvas(16, 16);
-  for (let y = 0; y < 15; y++) for (let x = 0; x < 16; x++) { const p = src.get(9 + 31 * x + 15, 15 + 31 * y + 15); if (p[3] >= 128) c.set(x, y + 1, [...p.slice(0, 3), 255]); }
+  const src = loadPng(path.resolve(WEB, '../Super Mario Run and Gun/Non-Mario Build/invincibility.png')), small = downscale(src, 9, 15), c = new Canvas(16, 16);
+  for (let y = 0; y < 15; y++) for (let x = 0; x < 9; x++) { const p = small.get(x, y); if (p[3] >= 128) c.set(4 + x, y + 1, [...p.slice(0, 3), 255]); }
   emit('star', c, groupPalette([c]), { type: 'sprite' });
 }
 // The flamethrower pickup (user request, 2026-10-18): the user's flamethrower.png (353x161, a flamethrower on a black
@@ -633,8 +767,10 @@ const fxPal = groupPalette(null, FX);
 function ember() { const c = new Canvas(8, 8), x = 4, y = 4;
   c.rect(x - 2, y - 3, 4, 6, hex('#ff8a3d')); c.rect(x - 3, y - 2, 6, 4, hex('#ff8a3d'));
   c.rect(x - 1, y - 2, 2, 4, hex('#ffd98a')); c.rect(x - 2, y - 1, 4, 2, hex('#ffd98a')); c.rect(x - 1, y - 1, 1, 1, hex('#fff6dc')); return c; }
-function mush(blue) { const c = new Canvas(16, 16), x = 2, y = 2;
-  const c1 = hex(blue ? '#3c8ce8' : '#e8453c'), c2 = hex(blue ? '#1f4f9c' : '#9c2420');
+// Cap colours (main, rim) of the mushroom frames: 0 red, 1 blue, 2 green
+const MUSH_CAPS = [['#e8453c', '#9c2420'], ['#3c8ce8', '#1f4f9c'], ['#4cc83c', '#24761f']];
+function mush(kind) { const c = new Canvas(16, 16), x = 2, y = 2;
+  const c1 = hex(MUSH_CAPS[kind][0]), c2 = hex(MUSH_CAPS[kind][1]);
   c.rect(x + 3, y, 6, 1, c1); c.rect(x + 1, y + 1, 10, 1, c1); c.rect(x, y + 2, 12, 4, c1); c.rect(x, y + 5, 12, 1, c2);
   c.rect(x + 2, y + 2, 2, 2, hex('#fff6ea')); c.rect(x + 8, y + 2, 2, 2, hex('#fff6ea')); c.rect(x + 5, y + 1, 2, 2, hex('#fff6ea'));
   c.rect(x + 3, y + 6, 6, 6, hex('#f3e3c3')); c.rect(x + 3, y + 11, 6, 1, hex('#c9b48f'));
@@ -649,7 +785,13 @@ function hp(full) { const c = new Canvas(8, 8);
 // The boss's health bar: 5 segments of 32x8, each with 33 fill levels (0-32 px)
 function barSegment(fill) { const c = new Canvas(32, 8); c.rect(0, 1, 32, 6, hex('#2a2440')); if (fill) { c.rect(0, 1, fill, 6, hex('#e8453c')); c.rect(0, 1, fill, 1, hex('#ff8a3d')); c.rect(0, 6, fill, 1, hex('#9c2420')); } return c; }
 emit('ember', ember(), fxPal, { type: 'sprite' });
-emit('mush', stack([mush(false), mush(true)]), fxPal, { type: 'sprite', height: 16 });
+// Own palette: the shared FX palette is full (15 colours) and the green cap needs two more
+const mushSheet = stack([0, 1, 2].map(mush));
+emit('mush', mushSheet, groupPalette([mushSheet]), { type: 'sprite', height: 16 });
+// The 1-up: since 2026-10-29 (user) the green mushroom (mush(2), 12x12 centred in 16x16, so it sits in the middle of the
+// 1-up's 14x14 box as the old picture did); it was the web game's sprites/oneup.png at 14x14
+const oneC = mush(2);
+emit('oneup', oneC, groupPalette([oneC]), { type: 'sprite' });
 emit('bullet', bullet(), fxPal, { type: 'sprite' });
 emit('bullet_up', turnUp(bullet()), fxPal, { type: 'sprite' });
 emit('bullet_diag', turnDiag(bullet(), 16, 16), fxPal, { type: 'sprite' });
@@ -688,25 +830,31 @@ emit('door', door(), propPal, { type: 'sprite' });
 emit('platform', stack([logPlatform(), stonePlatform(), steelPlatform()]), propPal, { type: 'sprite', height: 32 });
 emit('gate', gate(), propPal, { type: 'sprite' });
 
-// Cracked blocks: jungle, graveyard, stone and city looks (frames 0, 1, 2, 3)
+// Cracked blocks: jungle, graveyard, stone and city looks (frames 0, 1, 2, 3). They're CRACK_H tall (user, 2026-10-29: 27 px,
+// so standing shots hit them; the game counts the CRACK_H - 16 px above the block's tile as part of it), one tile wide,
+// drawn at the bottom of a 16x32 frame. Same borders as the old 16x16 blocks; the texture repeats and the cracks stretch.
+const CRACK_H = 27;
 {
-  const crackLines = [[7, 2, 1, 3], [6, 5, 1, 3], [7, 8, 1, 2], [8, 10, 1, 4], [3, 7, 3, 1], [9, 9, 3, 1], [11, 10, 1, 2]];
-  const j = new Canvas(16, 16), [sc, sr] = JT.block(2, 2);
-  j.blit(jungleSheet, sc * T, sr * T, T, T, 0, 0);
-  j.rect(0, 0, 16, 1, hex('#9ccf4f')); j.rect(0, 0, 1, 16, hex('#9ccf4f')); j.rect(1, 1, 14, 1, hex('#4f8a3a')); j.rect(1, 1, 1, 14, hex('#4f8a3a'));
-  j.rect(0, 15, 16, 1, hex('#0d161c')); j.rect(15, 0, 1, 16, hex('#0d161c'));
+  const H = CRACK_H, Y = 32 - H, k = H / 16;
+  const crackLines = [[7, 2, 1, 3], [6, 5, 1, 3], [7, 8, 1, 2], [8, 10, 1, 4], [3, 7, 3, 1], [9, 9, 3, 1], [11, 10, 1, 2]]
+    .map(([x, y, w, h]) => [x, Y + Math.round(y * k), w, Math.max(1, Math.round(h * k))]);
+  const texture = (c, img, sx, sy) => { for (let y = 0; y < H; y += 16) c.blit(img, sx, sy, 16, Math.min(16, H - y), 0, Y + y); };
+  const j = new Canvas(16, 32), [sc, sr] = JT.block(2, 2);
+  texture(j, jungleSheet, sc * T, sr * T);
+  j.rect(0, Y, 16, 1, hex('#9ccf4f')); j.rect(0, Y, 1, H, hex('#9ccf4f')); j.rect(1, Y + 1, 14, 1, hex('#4f8a3a')); j.rect(1, Y + 1, 1, H - 2, hex('#4f8a3a'));
+  j.rect(0, 31, 16, 1, hex('#0d161c')); j.rect(15, Y, 1, H, hex('#0d161c'));
   for (const [x, y, w, h] of crackLines) j.rect(x, y, w, h, hex('#c8e6a0'));
-  const gr = new Canvas(16, 16);
-  gr.blit(graveSheet, 72, 28, 16, 16, 0, 0);
-  gr.rect(0, 0, 16, 1, hex('#c9c4b2')); gr.rect(0, 0, 1, 16, hex('#c9c4b2')); gr.rect(0, 15, 16, 1, hex('#16130f')); gr.rect(15, 0, 1, 16, hex('#16130f'));
+  const gr = new Canvas(16, 32);
+  texture(gr, graveSheet, 72, 28);
+  gr.rect(0, Y, 16, 1, hex('#c9c4b2')); gr.rect(0, Y, 1, H, hex('#c9c4b2')); gr.rect(0, 31, 16, 1, hex('#16130f')); gr.rect(15, Y, 1, H, hex('#16130f'));
   for (const [x, y, w, h] of crackLines) gr.rect(x, y, w, h, hex('#1c1915'));
-  const s = new Canvas(16, 16);
-  s.rect(0, 0, 16, 16, hex('#2e2846')); s.rect(1, 1, 14, 14, hex('#433b5e')); s.rect(1, 1, 14, 1, hex('#5a4f7c')); s.rect(1, 1, 1, 14, hex('#5a4f7c'));
+  const s = new Canvas(16, 32);
+  s.rect(0, Y, 16, H, hex('#2e2846')); s.rect(1, Y + 1, 14, H - 2, hex('#433b5e')); s.rect(1, Y + 1, 14, 1, hex('#5a4f7c')); s.rect(1, Y + 1, 1, H - 2, hex('#5a4f7c'));
   for (const [x, y, w, h] of crackLines) s.rect(x, y, w, h, hex('#16122a'));
-  const ci = new Canvas(16, 16);
-  ci.rect(0, 0, 16, 16, hex('#14101f')); ci.rect(1, 1, 14, 14, hex('#2c2444')); ci.rect(1, 1, 14, 1, hex('#ff5aa8')); ci.rect(1, 1, 1, 14, hex('#8f7fc4'));
+  const ci = new Canvas(16, 32);
+  ci.rect(0, Y, 16, H, hex('#14101f')); ci.rect(1, Y + 1, 14, H - 2, hex('#2c2444')); ci.rect(1, Y + 1, 14, 1, hex('#ff5aa8')); ci.rect(1, Y + 1, 1, H - 2, hex('#8f7fc4'));
   for (const [x, y, w, h] of crackLines) ci.rect(x, y, w, h, hex('#0c0916'));
-  emit('crack', stack([j, gr, s, ci]), groupPalette([j, gr, s, ci]), { type: 'sprite', height: 16 });
+  emit('crack', stack([j, gr, s, ci]), groupPalette([j, gr, s, ci]), { type: 'sprite', height: 32 });
 }
 
 // Particles: 15 colours x (1px, 2px) dots
@@ -778,18 +926,19 @@ function medianCut(hist, n) {
 }
 
 // ---------- Super Mario Hellbound title picture (the second startup screen) ----------
-// Since 2026-10-16 the user's new 1312x816 title art (a JPG, turned into a PNG with Windows' own image library, as
-// pngjs can't read JPGs). Scaled down to fill the screen's height (256x160, area-averaged) with 8 px trimmed off each
-// side, and reduced from thousands of colours to 255. (The first title art was a 2000x1249 PNG, cropped the same way.)
+// Since 2026-10-29 the user's "Hellbound title screen.png" (first 1000x667, the screen's own 3:2 shape), area-averaged
+// straight down to 240x160 and reduced to 255 colours; anything see-through is drawn black. (Earlier: a 1312x816 JPG
+// and a 2000x1249 PNG, both scaled to 256x160 with 8 px trimmed off each side.)
+// A picture taller than 3:2 (the user's 2000x2000 update, 2026-10-29: the logo in rows 204-784, black below) is cut to
+// its top 3:2 first, so nothing is squashed.
 {
-  const jpg = path.resolve(WEB, '../Super Mario Run and Gun/Super Mario Hellbound NEW Title Screen.jpg'), png = path.join(os.tmpdir(), 'smhb-title.png');
-  require('child_process').execFileSync('powershell.exe', ['-NoProfile', '-Command',
-    `Add-Type -AssemblyName System.Drawing; $i = [System.Drawing.Image]::FromFile('${jpg.replace(/'/g, "''")}'); $i.Save('${png}', [System.Drawing.Imaging.ImageFormat]::Png); $i.Dispose()`]);
-  const src = loadPng(png);
-  const small = downscale(src, 256, 160), c = new Canvas(256, 256);
+  let src = loadPng(path.resolve(WEB, '../Super Mario Run and Gun/Non-Mario Build/Hellbound title screen.png'));
+  const h32 = Math.round(src.w * 2 / 3);
+  if (src.h > h32) { const top = new Canvas(src.w, h32); top.blit(src, 0, 0, src.w, h32, 0, 0); src = top; }
+  const small = downscale(src, 240, 160), c = new Canvas(256, 256);
   for (let y = 0; y < 160; y++) for (let x = 0; x < 240; x++) {
-    const p = small.get(8 + x, y);
-    if (p[3] >= 128) c.set(8 + x, 48 + y, [...q5(p.slice(0, 3)), 255]);
+    const p = small.get(x, y), a = p[3] / 255;
+    c.set(8 + x, 48 + y, [...q5(p.slice(0, 3).map(v => v * a)), 255]);
   }
   const hist = histogram(c), pal = medianCut(hist, 255);
   emitBg8('title_art', c, pal);
@@ -809,6 +958,11 @@ let h = `// Generated by gba/tools/build-assets.js from the web game's LEVELS bu
 #define LEVEL_DATA_H
 
 #include "level_types.h"
+
+// The flying demons' hitbox (their wing beat's box), and the sprite's centre from its centre in half px, art facing left
+constexpr int demon_box_w = ${DEMON_BOX.w}, demon_box_h = ${DEMON_BOX.h}, demon_spr_dx2 = ${DEMON_BOX.dx * 2}, demon_spr_dy2 = ${DEMON_BOX.dy * 2};
+// How far a cracked block reaches above its tile (px): it's CRACK_H tall, drawn at the bottom of a 16x32 sprite
+constexpr int crack_rise = ${CRACK_H - 16};
 `;
 const infos = [];
 LEVELS.forEach(({ def, L }, i) => {
@@ -823,8 +977,16 @@ LEVELS.forEach(({ def, L }, i) => {
   h += arr('point', 'oneup_blocks', [...L.oneupBlocks], k => `{${k}}`);
   // (then the GBA-only flying demons, kind 4 = FOE_DEMON: a 12x14 body (20x24 until they were made 40% smaller)
   // patrolling columns a to b, its middle on the row's; the level's own enemies have kind -1, the level's foe)
-  // Reapers are 10% smaller than the web game's (2026-10-20): hitbox 25x31 instead of 27x34, same middle, same feet
-  const shrink = e => def.foe === 'death' ? { ...e, x: e.x + 1, a: e.a + 1, b: e.b + 1, w: e.w - 2, y: e.y + 3, h: e.h - 3 } : e;
+  // Reapers are 25 wide (2026-10-20; 27 in the web game, same middle) and REAPER_H tall to match their sprite (user,
+  // 2026-10-29; 31 before, 34 in the web game), same feet
+  // World 1's aliens are ALIEN_H tall to match their sprite (user, 2026-10-29; 28 in the web game), same feet; World 3's
+  // mechs (an alien to the web builder) MECH_W x MECH_H (user, same day; 2026-10-30 for the width), same feet, same middle
+  const shrink = e => def.foe === 'death' ? { ...e, x: e.x + 1, a: e.a + 1, b: e.b + 1, w: e.w - 2, y: e.y + e.h - REAPER_H, h: REAPER_H }
+    : def.gbaFoe === 'mech' ? (dx => ({ ...e, x: e.x + dx, a: e.a + dx, b: e.b + dx, w: MECH_W, y: e.y + e.h - MECH_H, h: MECH_H }))(Math.floor((e.w - MECH_W) / 2))
+    : def.foe === 'alien' ? { ...e, y: e.y + e.h - ALIEN_H, h: ALIEN_H }
+    // World 4's hell beasts are BEAST_W x BEAST_H to match their sprite (user, 2026-10-29; 23x35 in the web game), same
+    // feet, same middle
+    : def.foe === 'beast' ? (dx => ({ ...e, x: e.x + dx, a: e.a + dx, b: e.b + dx, w: BEAST_W, y: e.y + e.h - BEAST_H, h: BEAST_H }))(Math.floor((e.w - BEAST_W) / 2)) : e;
   // Difficulties (bit 1 Normal, 2 Hard, 4 Expert per enemy, enemy_def::modes). Hard (levels.js hardSplits): each split
   // alien is Normal-only and its two halves are Hard and Expert; Hard's extra enemies and flying demons (levels.js
   // HARD_ENEMIES, hardFlyerSpots) are Hard and Expert too. Expert (levels.js expertSplits) splits more of Hard's patrols
@@ -841,9 +1003,17 @@ LEVELS.forEach(({ def, L }, i) => {
   pats.push(...(def.hardEnemies || []).map(a => ({ a, modes: 6 })));
   split(def.expertSplits || [], 6, 3, 4);
   pats.push(...(def.expertEnemies || []).map(a => ({ a, modes: 4 })));
+  // (levels.js EXPERT_DROP_ENEMIES: patrols Expert leaves out)
+  for (const t of def.expertDropEnemies || []) {
+    const i = pats.findIndex(q => q.a.join() === t.join() && q.modes & 4);
+    if (i < 0) throw new Error(`${def.name}: no Expert patrol ${t} to drop`);
+    if (! (pats[i].modes &= 3)) pats.splice(i, 1);
+  }
   const foes = levels.build({ ...def, build: b => pats.forEach(p => b.enemy(...p.a)) }).enemies;
   if (foes.length !== pats.length || L.enemies.length !== pats.filter(p => p.modes & 1).length) throw new Error(`${def.name}: enemy count mismatch`);
-  const fly = (list, modes) => (list || []).map(([a, b, row]) => ({ x: a * T, y: row * T + 8 - 7, w: 12, h: 14, a: a * T, b: b * T, kind: 4, modes }));
+  // (centred where the old 12x14 box was: 6 px into column a, on the row's middle)
+  const fx = 6 - Math.floor(DEMON_BOX.w / 2), fy = 8 - Math.floor(DEMON_BOX.h / 2);
+  const fly = (list, modes) => (list || []).map(([a, b, row]) => ({ x: a * T + fx, y: row * T + fy, w: DEMON_BOX.w, h: DEMON_BOX.h, a: a * T + fx, b: b * T + fx, kind: 4, modes }));
   const enemies = [...foes.map((e, i) => ({ ...shrink(e), kind: -1, modes: pats[i].modes })), ...fly(def.flyers, 7), ...fly(def.hardFlyers, 6), ...fly(def.expertFlyers, 4)];
   const on = [1, 2, 4].map(bit => enemies.filter(e => e.modes & bit).length);
   h += arr('enemy_def', 'enemies', enemies, e => `{${n(e.x)}, ${n(e.y)}, ${e.w}, ${e.h}, ${n(e.a)}, ${n(e.b)}, ${e.kind}, ${e.modes}}`);
@@ -855,7 +1025,7 @@ LEVELS.forEach(({ def, L }, i) => {
     `${ns}::coins, ${len(L.coins)}, ${ns}::embers, ${len(L.embers)}, ${ns}::mushrooms, ${len(L.mush) + hardMush.length}, ${ns}::oneup_blocks, ${L.oneupBlocks.size}, ` +
     `${ns}::enemies, ${len(enemies)}, ${ns}::movers, ${len(L.movers)}, ${ns}::checks, ${len(L.checks)}, {${L.start.x}, ${L.start.y}}, ` +
     `${L.door ? `true, {${L.door.x}, ${L.door.y}}` : 'false, {0, 0}'}, ` +
-    `${L.boss ? `true, ${L.boss.gate}, {${L.boss.door.x}, ${L.boss.door.y}}` : 'false, 0, {0, 0}'}, ${def.blockCoins}, {${def.star || [-1, -1]}}, {${def.flame || [-1, -1]}}, {${def.rocket || [-1, -1]}}, {${on}}, ${L.checks.findIndex(c => c.col === def.hardDropCheck)}, ${def.hardDropMush.reduce((m, i) => m + 2 ** i, 0)}u, ${hardMush.length}, ${!! def.hardNoStar}, ${def.expertDropMush.reduce((m, i) => m + 2 ** i, 0)}u, ${!! def.expertNoRocket}, ${!! def.expertNoStar}, {${def.expertStar || [-1, -1]}} }`);
+    `${L.boss ? `true, ${L.boss.gate}, {${L.boss.door.x}, ${L.boss.door.y}}` : 'false, 0, {0, 0}'}, ${def.blockCoins}, {${def.star || [-1, -1]}}, {${def.flame || [-1, -1]}}, {${def.rocket || [-1, -1]}}, {${on}}, ${L.checks.findIndex(c => c.col === def.hardDropCheck)}, ${def.hardDropMush.reduce((m, i) => m + 2 ** i, 0)}u, ${hardMush.length}, ${!! def.hardNoStar}, ${def.expertDropMush.reduce((m, i) => m + 2 ** i, 0)}u, ${!! def.expertNoRocket}, ${!! def.expertNoStar}, {${def.expertStar || [-1, -1]}}, {${def.expertOneup || [-1, -1]}}, ${!! def.hardOnlyNoStar} }`);
   console.log(`${def.name}: w ${L.w}, coins ${L.coins.length}, embers ${L.embers.length}, enemies (flying included) ${on[0]} Normal, ${on[1]} Hard, ${on[2]} Expert, movers ${L.movers.length}, cracks ${L.cracks}, bg ${bgWidths[def.name]}px`);
 });
 h += `\nconstexpr level_info levels[] = {\n${infos.join(',\n')}\n};\nconstexpr int level_count = ${LEVELS.length};\n`;
@@ -939,7 +1109,13 @@ for (const old of ['level_jungle.h', 'jungle_sky.h']) fs.rmSync(path.join(OUT_I,
   const vols = {};
   // The gunshot is made 1.5x hotter than its peak (limited): the game mixes sound effects at double volume into an output
   // played at half strength (see main.cpp), and the gunshot alone would need more than full volume
-  const SFX = [['jump', 'sfx/jump.mp3', 0.02], ['shoot', 'sfx/machine-gun.mp3', 0.6, false, 1.5], ['coin', 'sfx/coin.mp3', 0.05], ['death', 'sfx/death.mp3', 0.6],
+  const SFX = [
+    // The jump (user request, 2026-10-29): the user's own jump.mp3, replacing the web game's sfx/jump.mp3; 0.0312 (the old
+    // one had 0.02) plays it as loud as the old jump (loudest 150 ms x volume)
+    ['jump', path.resolve(WEB, '../Super Mario Run and Gun/Non-Mario Build/jump.mp3'), 0.0312], ['shoot', 'sfx/machine-gun.mp3', 0.6, false, 1.5], 
+    // The coin (user request, 2026-10-29): the user's own coin.mp3, replacing the web game's sfx/coin.mp3; 0.0715 (the
+    // old one had 0.05) plays it as loud as the old coin (loudest 150 ms x volume)
+    ['coin', path.resolve(WEB, '../Super Mario Run and Gun/Non-Mario Build/coin.mp3'), 0.0715], ['death', 'sfx/death.mp3', 0.6],
     ['game_over', 'sfx/game-over.mp3', 0.6], ['course_clear', 'sfx/course-clear.mp3', 0.5, true],
     // A rocket's explosion (user request, 2026-10-19), from the user's own file: 1.5x hot like the gunshot, which it would
     // otherwise be quieter than (RMS 21.7 against 34.3 at full volume)
@@ -1053,9 +1229,12 @@ for (const old of ['level_jungle.h', 'jungle_sky.h']) fs.rmSync(path.join(OUT_I,
     // The title screens (from the title picture on) play Heatley Bros' "Title Screen Music" (the user's choice, 2026-10-17),
     // converted like the Bit By Bit tracks, looping from the start
     ['title_music', path.resolve(WEB, '../16-bit Assets/Title Screen Music (by Heatley Bros).mp3'), true, null],
-    // The star's music (user request, 2026-10-18): the star lasts 13 s (16 s in World 4-4; both +3 s on 2026-10-20), so only the
-    // first 16.5 s of the 178 s track (a 5th entry: the seconds kept; it was 10.5 s, then 13.5 s); elsewhere the star ends before the clip
-    ['star_music', path.resolve(WEB, '../Super Mario Run and Gun/SFX/Star Music.mp3'), true, null, 16.5]];
+    // The star's music (user request, 2026-10-18): the star lasts 13 s (16 s in World 4-4). Until 2026-10-29 it was the first
+    // 16.5 s of the 178 s "Star Music.mp3" (an optional 5th entry gives the seconds kept).
+    // Since 2026-10-29 (user): their "invincibility music.mp3" (25 s, longer than any star), kept whole, looping from the start
+    ['star_music', path.resolve(WEB, '../Super Mario Run and Gun/Non-Mario Build/invincibility music.mp3'), true, null],
+    // The Congratulations screen (user request, 2026-10-29): the user's "beat the game music.mp3" (60 s), looping from the start
+    ['win_music', path.resolve(WEB, '../Super Mario Run and Gun/Non-Mario Build/beat the game music.mp3'), true, null]];
   for (const [name, file, clean, intro, seconds] of MUSIC) {
     let { mono, rate: srcRate, peak } = await decodeMono(file), rate = 21024, loopFrom = 0, outN;
     if (seconds) mono = mono.subarray(0, Math.round(seconds * srcRate));

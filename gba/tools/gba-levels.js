@@ -106,7 +106,7 @@ module.exports = [
     b.ground(202, 219, 11); b.enemy(204, 210, 10); b.crack(211, 10); b.spikes(212, 213, 10); b.ember(212, 7); b.ember(213, 7);
     b.crack(215, 10);
     // Boss arena: a flat floor (it had World 4-4's three planks until the user had them removed, 2026-10-18)
-    b.ground(220, 253, 14); b.mush(221, 13); b.check(222, 13);
+    b.ground(220, 253, 14); b.bluemush(221, 13); b.check(222, 13);
     b.boss(224, 251, 13);
     // Coins
     b.coins(3, 9, 12, 2); b.coins(16, 18, 10); b.coins(21, 29, 6, 2); b.coins(31, 32, 7); b.coins(33, 35, 9); b.coins(38, 40, 11);
@@ -210,7 +210,7 @@ module.exports = [
     b.ground(172, 182, 10); b.enemy(174, 181, 9); b.mush(178, 9); b.row(175, 181, 6, 3);
     b.ground(183, 199, 13); b.crack(183, 12); b.enemy(185, 190, 12); b.spikes(192, 193, 12); b.ember(192, 9); b.ember(193, 9); b.ember(187, 9);
     // Boss arena: the same planks as World 1-4's and 4-4's
-    b.ground(200, 233, 14); b.mush(201, 13); b.check(202, 13);
+    b.ground(200, 233, 14); b.bluemush(201, 13); b.check(202, 13);
     b.plat(208, 211, 11); b.plat(213, 224, 8); b.plat(226, 229, 11);
     b.boss(204, 231, 13);
     // Coins
@@ -357,7 +357,7 @@ module.exports = [
     b.ground(195, 219, 13); b.enemy(197, 203, 12); b.plat(199, 203, 10); b.enemy(199, 203, 9); b.ember(201, 7);
     b.spikes(206, 207, 12); b.ember(206, 9); b.ember(207, 9); b.enemy(209, 213, 12); b.ember(214, 9);
     // Boss arena: the same planks as the other boss arenas
-    b.ground(220, 253, 14); b.mush(221, 13); b.check(222, 13);
+    b.ground(220, 253, 14); b.bluemush(221, 13); b.check(222, 13);
     b.plat(228, 231, 11); b.plat(233, 244, 8); b.plat(246, 249, 11);
     b.boss(224, 251, 13);
     // Coins
@@ -492,7 +492,7 @@ module.exports = [
     b.plat(253, 255, 9); b.enemy(253, 255, 8); b.plat(258, 260, 7); b.ember(259, 6); b.oneup(269, 11); b.plat(263, 265, 9); b.enemy(263, 265, 8);
     b.ground(268, 282, 12); b.enemy(270, 276, 11); b.plat(271, 275, 9); b.row(272, 274, 8, 2); b.enemy(271, 275, 8);
     b.mover(284, 12, 3, 296, 12, 300); b.row(287, 295, 10, 4);
-    b.ground(300, 312, 14); b.mush(301, 13); b.enemy(303, 308, 13); b.spikes(310, 311, 13); b.ember(310, 11); b.ember(311, 11);
+    b.ground(300, 312, 14); b.mush(301, 13); b.enemy(302, 306, 13); b.spikes(308, 309, 13); b.ember(307, 13); b.ember(313, 10);
     b.ground(313, 318, 11); b.enemy(314, 318, 10);
     b.plat(321, 323, 9); b.ember(322, 8); b.plat(326, 328, 11); b.enemy(326, 328, 10);
     b.ground(331, 351, 14); b.enemy(333, 338, 13); b.ember(336, 11); b.ember(339, 11); b.check(341, 13); b.mush(343, 13); b.crack(350, 13);

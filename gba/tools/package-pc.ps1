@@ -1,6 +1,6 @@
 # Packages the game for PC (user request, 2026-10-23): the built ROM plus a portable copy of mGBA and a small launcher,
-# as gba\dist\Super Mario Hellbound (PC)\ and a zip of it next to it.
-#   Super Mario Hellbound.exe   launcher (tools\pc\Launcher.cs, compiled with the .NET Framework's csc.exe)
+# as gba\dist\Hellbound (PC)\ and a zip of it next to it.
+#   Hellbound.exe               launcher (tools\pc\Launcher.cs, compiled with the .NET Framework's csc.exe)
 #   game\sm-hellbound.gba       the ROM (the game saves next to it, as sm-hellbound.sav)
 #   mgba\                       mGBA.exe from the installed mGBA, in portable mode (portable.ini: its settings stay in
 #                               this folder and never touch the player's own mGBA), with its licence files
@@ -12,7 +12,7 @@ Add-Type -AssemblyName System.Drawing
 
 $gba = Split-Path $PSScriptRoot
 $rom = Join-Path $gba 'sm-hellbound.gba'
-$name = 'Super Mario Hellbound (PC)'
+$name = 'Hellbound (PC)'
 $dist = Join-Path $gba 'dist'
 $out = Join-Path $dist $name
 $csc = 'C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe'
@@ -50,9 +50,9 @@ autoload=1
 volume=256
 "@.Replace("`n", "`r`n"), $utf8)
 
-# The launcher, with Mario (sprites\mario1.png, the web game's art) as its icon: square, nearest-neighbour, as a
-# PNG-compressed .ico at 256/48/32/16
-$src = [Drawing.Image]::FromFile((Join-Path (Split-Path $gba) 'sprites\mario1.png'))
+# The launcher, with the hero (the user's soldier, "idle (with rifle).png", since 2026-10-29; Mario's sprites\mario1.png
+# before) as its icon: square, nearest-neighbour, as a PNG-compressed .ico at 256/48/32/16
+$src = [Drawing.Image]::FromFile((Join-Path (Split-Path (Split-Path $gba)) 'Super Mario Run and Gun\Non-Mario Build\new sprites\idle (with rifle).png'))
 $sizes = 256, 48, 32, 16
 $pngs = foreach ($s in $sizes) {
   $bmp = New-Object Drawing.Bitmap $s, $s
@@ -78,21 +78,22 @@ for ($i = 0; $i -lt $sizes.Count; $i++) {
 }
 foreach ($p in $pngs) { $w.Write($p) }
 $w.Close()
-& $csc /nologo /target:winexe /optimize+ "/win32icon:$ico" "/out:$out\Super Mario Hellbound.exe" /r:System.Windows.Forms.dll "$PSScriptRoot\pc\Launcher.cs"
+& $csc /nologo /target:winexe /optimize+ "/win32icon:$ico" "/out:$out\Hellbound.exe" /r:System.Windows.Forms.dll "$PSScriptRoot\pc\Launcher.cs"
 if ($LASTEXITCODE -ne 0) { throw 'The launcher did not compile' }
 Remove-Item $ico
 
 [IO.File]::WriteAllText("$out\README.txt", @"
-SUPER MARIO HELLBOUND (PC)
+HELLBOUND (PC)
 by Dreamweaver Studios
 
 To play: unzip the whole folder anywhere you can write to (not Program Files), then run
-"Super Mario Hellbound.exe". Your progress and high scores are saved in the game folder.
+"Hellbound.exe". Your progress and high scores are saved in the game folder.
 
 KEYBOARD
   Arrow keys   move / aim (UP aims up, UP+LEFT/RIGHT diagonally), DOWN crouches
   X            jump (A)
   Z            shoot (B)
+  S            toss grenades (R)
   Enter        START: menus, pause
   Backspace    SELECT
   Alt+Enter    full screen on/off
@@ -103,7 +104,7 @@ GAMEPADS
 
 CREDITS
   Dreamweaver Studios
-  Sprites: Goldenfrank0, ansimuz, Jesse Munguia, Anokolisa
+  Sprites: ansimuz, Jesse Munguia, Anokolisa
   Music: Bert Cole, Heatley Bros, Pixel 8 Beats, The Grump Sounds
 
 ABOUT THE EMULATOR

@@ -43,14 +43,31 @@ if (flames.length && ! process.env.SMHB_PATH_ONLY) {
 }
 
 // 3: start to door
-const T = 16, ROWS = 17, PW = 14, PH = 24;
+// PH: the GBA hero's standing hitbox, 36 since 2026-10-29 (was 24, then 31; main.cpp's PH); SMHB_PH overrides it
+const T = 16, ROWS = 17, PW = +(process.env.SMHB_PW || 26), PH = +(process.env.SMHB_PH || 40);
 const mod = { exports: {} };
 new Function('module', `const T = 16, ROWS = 17, PH = 24, COINS_PER_BLOCK = 5, BEAST_HP = 6;\n${src}\nmodule.exports = { LEVELS, build };`)(mod);
 for (const def of mod.exports.LEVELS) {
+  if (process.env.SMHB_ONLY && def.name !== process.env.SMHB_ONLY) continue;   // one level, by internal name
   const L = mod.exports.build(def);
-  const tile = (tx, ty) => (tx < 0 || tx >= L.w) ? 1 : (ty < 0 || ty >= ROWS) ? 0 : L.grid[ty][tx];
+  // blocksGone: every cracked block shot away (the second search below)
+  let blocksGone = false;
+  const tile = (tx, ty) => { if (tx < 0 || tx >= L.w) return 1; if (ty < 0 || ty >= ROWS) return 0; const t = L.grid[ty][tx]; return blocksGone && t === 4 ? 0 : t; };
   const solid = t => t === 1 || t === 4;
+  // Cracked blocks are CRACK_H 27 px tall on the GBA (2026-10-29; main.cpp crack_rise): the bottom RISE px of the empty
+  // tile above one count as the block. tileAt: a point's tile, as [tile, tx, ty]; top: a tile's top (a block's is higher)
+  const RISE = 11;
+  const cap = (tx, ty) => tile(tx, ty) === 0 && tile(tx, ty + 1) === 4;
+  const capTop = ty => (ty + 1) * T - RISE;
+  const tileAt = (x, y) => { const tx = Math.floor(x / T), ty = Math.floor(y / T); return cap(tx, ty) && y >= capTop(ty) ? [4, tx, ty + 1] : [tile(tx, ty), tx, ty]; };
+  const top = (tx, ty) => ty * T - (tile(tx, ty) === 4 ? RISE : 0);
+  const wall = (tx, ty, bottom) => solid(tile(tx, ty)) || (cap(tx, ty) && bottom > capTop(ty));
   const onSpikes = (x, y) => { for (let ty = Math.floor(y / T); ty <= Math.floor((y + PH - 0.01) / T); ty++) for (let tx = Math.floor(x / T); tx <= Math.floor((x + PW - 0.01) / T); tx++) if (tile(tx, ty) === 3) return true; return false; };
+  // The hero mustn't begin inside a wall or spikes at the level start or a checkpoint (main.cpp respawn_x / respawn_y)
+  const embedded = (x, y) => { for (let ty = Math.floor(y / T); ty <= Math.floor((y + PH - 0.01) / T); ty++) for (let tx = Math.floor(x / T); tx <= Math.floor((x + PW - 0.01) / T); tx++) if (wall(tx, ty, y + PH) || tile(tx, ty) === 3) return true; return false; };
+  if (embedded(L.start.x, L.start.y + 24 - PH)) console.log(`${def.name}: start is inside a wall or spikes at PW ${PW}`);
+  for (const c of L.checks) if ([c.x + Math.trunc((T - PW) / 2), c.x + T - PW, c.x].every(x => embedded(x, (c.row + 1) * T - PH)))
+    console.log(`${def.name}: checkpoint ${c.x / T} has no clear respawn spot at PW ${PW}`);
   const phases = L.movers.map(mv => { const out = []; for (let t = 0; t < mv.period; t += 6) { const k = (1 - Math.cos(t / mv.period * Math.PI * 2)) / 2; out.push({ x: mv.x0 + (mv.x1 - mv.x0) * k, y: mv.y0 + (mv.y1 - mv.y0) * k, w: mv.w }); } return out; });
 
   // One trajectory from (x0, y0); `plats` are moving platforms frozen at one moment (Mario can wait for them).
@@ -69,16 +86,15 @@ for (const def of mod.exports.LEVELS) {
       if (!held && vy < -2.6) vy = -2.6;
       vy = Math.min(vy + 0.42, 8.5);
       x += vx;
-      const mvx = x - ox, top = Math.floor(y / T), bot = Math.floor((y + PH - 0.01) / T);
-      if (mvx > 0) { const tx = Math.floor((x + PW - 0.01) / T); for (let ty = top; ty <= bot; ty++) if (solid(tile(tx, ty))) { x = tx * T - PW; vx = 0; break; } }
-      else if (mvx < 0) { const tx = Math.floor(x / T); for (let ty = top; ty <= bot; ty++) if (solid(tile(tx, ty))) { x = (tx + 1) * T; vx = 0; break; } }
+      const mvx = x - ox, row0 = Math.floor(y / T), bot = Math.floor((y + PH - 0.01) / T);
+      if (mvx > 0) { const tx = Math.floor((x + PW - 0.01) / T); for (let ty = row0; ty <= bot; ty++) if (wall(tx, ty, y + PH)) { x = tx * T - PW; vx = 0; break; } }
+      else if (mvx < 0) { const tx = Math.floor(x / T); for (let ty = row0; ty <= bot; ty++) if (wall(tx, ty, y + PH)) { x = (tx + 1) * T; vx = 0; break; } }
       const pb = y + PH;
       y += vy; ground = false;
       const l = Math.floor(x / T), r = Math.floor((x + PW - 0.01) / T);
       if (vy > 0) {
         for (let i = 0; i < plats.length; i++) { const p = plats[i]; if (p && pb <= p.y + 0.01 && y + PH >= p.y && x + PW > p.x && x < p.x + p.w) { landMover(i); return; } }
-        const ty = Math.floor((y + PH) / T);
-        for (let tx = l; tx <= r; tx++) { const tt = tile(tx, ty); if (solid(tt) || (tt === 2 && pb <= ty * T + 0.01)) { y = ty * T - PH; vy = 0; ground = true; break; } }
+        for (let c = l; c <= r; c++) { const [tt, tx, ty] = tileAt(c * T, y + PH); if (solid(tt) || (tt === 2 && pb <= ty * T + 0.01)) { y = top(tx, ty) - PH; vy = 0; ground = true; break; } }
       } else if (vy < 0) {
         const ty = Math.floor(y / T);
         for (let tx = l; tx <= r; tx++) if (solid(tile(tx, ty))) { y = (ty + 1) * T; vy = 0; break; }
@@ -97,19 +113,22 @@ for (const def of mod.exports.LEVELS) {
     }
   }
 
-  const seen = new Set(), queue = [], moverSeen = new Set();
-  let far = 0, doorReached = false;
+  let seen, queue, moverSeen, moverQueue, far, doorReached, shot = false;
   const door = L.door || (L.boss && L.boss.door), doorRow = door ? (door.y + door.h) / T - 1 : -1;
   const visit = (x, y) => {
-    x = Math.round(x / 4) * 4; y = Math.round(y);
+    // (spots are told apart to 4 px but searched from the exact x: rounding it let him drift into walls)
+    y = Math.round(y);
     if (onSpikes(x, y)) return;
-    const k = x + ',' + y; if (seen.has(k)) return; seen.add(k); queue.push([x, y]);
+    const k = Math.round(x / 4) * 4 + ',' + y; if (seen.has(k)) return; seen.add(k); queue.push([x, y]);
     far = Math.max(far, x);
     if (door && Math.round((y + PH) / T) - 1 === doorRow && x + PW > door.x && x < door.x + door.w) doorReached = true;
   };
   const moverVisit = i => { if (!moverSeen.has(i)) { moverSeen.add(i); moverQueue.push(i); } };
-  const moverQueue = [];
-  visit(L.start.x, L.start.y);
+  // Without shooting anything first; if that fails, with the blocks gone (some ways on go through one)
+  for (const gone of [false, true]) {
+  blocksGone = gone; shot = gone; seen = new Set(); queue = []; moverSeen = new Set(); moverQueue = []; far = 0; doorReached = false;
+  // (the builder's start is for the web game's 24 px player: put this one's feet in the same place, as the GBA does)
+  visit(L.start.x, L.start.y + 24 - PH);
   while ((queue.length || moverQueue.length) && !doorReached) {
     while (queue.length && !doorReached) {
       const [x, y] = queue.shift();
@@ -132,8 +151,11 @@ for (const def of mod.exports.LEVELS) {
       for (const p of phases[i]) for (let x = p.x - PW + 2; x < p.x + p.w - 2; x += 8) launch(x, p.y - PH, [], visit, () => {});
     }
   }
+  if (doorReached) break;
+  }
+  blocksGone = false;
   const half = defs.find(d => d.name === def.name).half;
   console.log(`${def.name}: w ${L.w}${half ? ` (2nd half ${half.at}-${half.at + half.len - 1})` : ''}, enemies ${L.enemies.length}, embers ${L.embers.length}, ` +
     `mush ${L.mush.length}, coins ${L.coins.length}, cracks ${L.cracks}, checks ${L.checks.length}, movers ${L.movers.length}`);
-  console.log(`${def.name}: start to door ${doorReached ? 'REACHABLE' : 'NOT reachable (furthest x ' + far + ' = col ' + Math.floor(far / T) + ')'}; ${seen.size} spots, movers ridden ${moverSeen.size}/${L.movers.length}`);
+  console.log(`${def.name}: start to door ${doorReached ? `REACHABLE${shot ? ' by shooting blocks' : ''}` : 'NOT reachable (furthest x ' + far + ' = col ' + Math.floor(far / T) + ')'}; ${seen.size} spots, movers ridden ${moverSeen.size}/${L.movers.length}`);
 }

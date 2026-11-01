@@ -495,7 +495,7 @@ module.exports = {
     // Part 8
     b.ground(266, 280, 12); b.enemy(268, 274, 11); b.plat(269, 273, 9); b.row(270, 272, 8, 2); b.enemy(269, 273, 8);
     b.mover(282, 12, 3, 294, 12, 300); b.row(285, 293, 10, 4);
-    b.ground(298, 310, 14); b.mush(299, 13); b.enemy(301, 306, 13); b.spikes(308, 309, 13); b.ember(308, 11); b.ember(309, 11);
+    b.ground(298, 310, 14); b.mush(299, 13); b.enemy(300, 304, 13); b.spikes(306, 307, 13); b.ember(305, 13); b.ember(311, 10);
     b.ground(311, 316, 11); b.enemy(312, 316, 10);
     b.plat(319, 321, 9); b.ember(320, 8); b.plat(324, 326, 11); b.enemy(324, 326, 10);
     b.ground(329, 351, 14); b.enemy(331, 336, 13); b.ember(337, 11); b.mush(342, 13); b.crack(350, 13);

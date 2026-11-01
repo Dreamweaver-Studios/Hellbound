@@ -1,4 +1,4 @@
-// Super Mario Hellbound - Game Boy Advance port (all three levels: Jungle, Graveyard, Hell and the Fire Skull).
+// Hellbound (until 2026-10-29 "Super Mario Hellbound") - Game Boy Advance port (all three levels: Jungle, Graveyard, Hell and the Fire Skull).
 // A line-by-line port of the web game's update code (updatePlayer, updateWorld, updateBullets, updateFoes, updateBoss, ...):
 // one world pixel is one GBA pixel, so every physics constant is unchanged. The GBA screen (240x160) shows
 // 15x10 tiles, so the camera also follows Mario vertically.
@@ -28,7 +28,14 @@
 #include "bn_blending.h"
 #include "bn_sprites.h"
 
-#include "bn_sprite_items_mario.h"
+#include "bn_sprite_items_hero.h"
+#include "bn_sprite_items_hero_flame.h"
+#include "bn_sprite_items_hero_rocket.h"
+#include "bn_sprite_items_hero_grenade.h"
+#include "bn_sprite_items_hero_prone.h"
+#include "bn_sprite_items_hero_flame_prone.h"
+#include "bn_sprite_items_hero_rocket_prone.h"
+#include "hero_frames.h"
 #include "bn_sprite_items_alien.h"
 #include "bn_sprite_palette_items_alien_flash.h"
 #include "bn_sprite_items_reaper.h"
@@ -111,7 +118,10 @@ namespace
 using bn::fixed;
 
 // ---------- Constants (the web game's values) ----------
-constexpr int T = 16, ROWS = 17, PW = 14, PH = 24, CH = 18, MAX_HP = 5, MAX_LIVES = 5;
+// The hero's hitbox: PH standing, CH crouching, PRONE_H lying prone (the rifle's crouch; user, 2026-10-29). 2026-10-29 (user): first 30% taller to match the taller sprite (were 24
+// and 18), then standing = the standing sprite's full 36 px (taller than two tiles; every level still checks out)
+constexpr int WEB_PH = 24;   // the web game's player height, which the level data's start positions are for
+constexpr int T = 16, ROWS = 17, PW = 26, PH = 40, CH = 23, PRONE_H = 23, MAX_HP = 5, MAX_LIVES = 5;
 constexpr int COINS_PER_LIFE = 100;   // (the coins in a cracked block are per level: level_info::block_coins)
 constexpr int SCREEN_W = 240, SCREEN_H = 160;
 // SPIKE_DMG: 1 since 2026-10-17 (user; the web game takes 2)
@@ -123,7 +133,7 @@ constexpr int ALIEN_HP = 4, REAPER_HP = 4, MECH_UNIT_HP = 5;   // 3, 3, 4 until 
 constexpr int HARD_ALIEN_HP = 5, HARD_REAPER_HP = 5, HARD_MECH_UNIT_HP = 6, HARD_BEAST_HP = 6;
 constexpr int EXPERT_REAPER_HP = 6;   // Expert: World 2's reapers take one more than Hard (user, 2026-10-24); others as Hard
 constexpr int BEAST_HP = 5, BEAST_RANGE = 240, RISE_END = 11 * 5, RISE_RANGE = 170, DEATH_SINK = 33, BEAST_BURN_END = 6 * 6 + 30;
-constexpr int BOSS_HP = 85, BOSS_MUSH_EVERY = 600, BOSS_MUSH_MAX = 3;
+constexpr int BOSS_HP = 80, BOSS_MUSH_EVERY = 600, BOSS_MUSH_MAX = 3;
 constexpr int EXPERT_EYE_MUSH_EVERY = 1200;   // the Eye Demon's fight (World 2-4) on Expert: one every 20 s (user, 2026-10-24)
 // A rocket launcher falls into the Fire Skull's arena once it's down to a quarter of its health (user requests, 2026-10-19:
 // a fifth at first)
@@ -158,17 +168,25 @@ constexpr int ROCKET_SPLASH = 32, ROCKET_SPLASH_DMG = 3;   // the blast's reach 
 constexpr int ROCKET_TIME = 1200, ROCKET_DMG = 6, ROCKET_DELAY = 42, HARD_ROCKET_DELAY = 30, EXPERT_ROCKET_DELAY = 30,
     ROCKET_NOSE = 9, BOOM_FRAMES = 6, BOOM_STEP = 4;
 const fixed ROCKET_SPEED = fixed(5);
-// Grenades (Expert only, user request, 2026-10-25): a card after the "WORLD 4" card says Mario found some, and he has
+// Grenades: GRENADE_START of them through World 1, and a fresh GRENADE_START through each of Worlds 2, 3 and 4, on every
+// difficulty (user, 2026-10-29; World 4 was Expert-only before), and on
+// Expert again (user request, 2026-10-25): a card after the "WORLD 4" card says Mario found some, and he has
 // GRENADE_START of them from World 4-1 on (they carry over to the next levels; a restart or a game-over retry gives back
 // the ones that attempt threw). R throws one in an arc the way he faces (higher when aiming up), one every GRENADE_DELAY
 // frames; it goes off on whatever it touches (floor, wall, plank from above, block, spikes, enemy, boss) or after
 // GRENADE_FUSE frames, in the rocket's fireball: GRENADE_DMG to every enemy, and the boss, within GRENADE_RADIUS px, and
 // it breaks the cracked blocks beside it. It doesn't hurt Mario.
-constexpr int GRENADE_START = 8, GRENADE_DELAY = 30, GRENADE_FUSE = 150, GRENADE_DMG = 8, GRENADE_RADIUS = 40;
+// (On Expert: EXPERT_GRENADES in Worlds 1-3, user 2026-10-30, and EXPERT_W4_GRENADES in World 4, user 2026-10-29)
+// He throws them by hand (user, 2026-10-29: the "grenade animation" art, replacing the launcher): R starts the 3-frame
+// animation (THROW_STEP frames each), the grenade leaves his hand as the last frame (arm out) comes up, which then holds
+// until THROW_END
+constexpr int THROW_STEP = 4, THROW_RELEASE = (HERO_THROW_N - 1) * THROW_STEP + 1, THROW_END = 24;
+constexpr int GRENADE_START = 5, EXPERT_GRENADES = 5, EXPERT_W4_GRENADES = 8, GRENADE_DELAY = 30, GRENADE_FUSE = 150, GRENADE_DMG = 8, GRENADE_RADIUS = 40;
 const fixed GRENADE_GRAVITY = fixed(0.2);
 constexpr int SCORE_FLAWLESS = 1000, SCORE_UNTOUCHED = 5000, SCORE_ALL_EMBERS = 500;   // 200 and 500 until 2026-10-23 (user)
 constexpr int SCORE_ALL_ENEMIES = 1000;   // Hard only: every enemy in the level defeated (user, 2026-10-24)
 constexpr int FOE_ALIEN = 0, FOE_REAPER = 1, FOE_BEAST = 2, FOE_MECH = 3;   // mechs (World 3) act like aliens, with one more HP
+constexpr fixed FOE_FIRE_H = 24.5;   // World 1's aliens and World 2's reapers fire from the height of the hero's rifle (user, 2026-10-31; was 17, 17.5)
 // Flying demons (user request, 2026-10-20): Worlds 2-1 to 2-4 have 8-10 besides their reapers (enemy_def.kind, from
 // levels.js FLYERS). They fly back and forth, bobbing; they don't shoot (user request, same day) but fly straight at
 // Mario when he's within DEMON_RANGE px, up to DEMON_LEASH px past their patrol, and only touching them hurts.
@@ -237,7 +255,7 @@ namespace sfx
     }
 
     // 3x the web mix at the user's request, then 20% louder (user, 2026-10-17): 3.6x
-    void jump() { play(bn::sound_items::jump, vol(sfx_volume_jump * 36 / 10)); }
+    void jump() { play(bn::sound_items::jump, vol(sfx_volume_jump * 655 / 100)); }   // 3.6x until 2026-10-31 (user: +30%, then +40%)
     // The gunshot would need 1.5x full volume after doubling, so its sample is made 1.5x hotter (limited) and it plays at
     // 2/3 of its old setting (1.0 after play()'s 3/2)
     void shoot() { play(bn::sound_items::shoot, vol(sfx_volume_shoot * 2 / 3)); }
@@ -348,6 +366,7 @@ struct player_t
     int flame = 0;  // frames of the flamethrower left
     int rocket = 0; // frames of the rocket launcher left
     int grenade_cool = 0;   // frames until R can throw another grenade
+    int throw_t = 0;        // frames into his throwing animation (0: not throwing; see THROW_STEP)
 };
 
 struct run_t
@@ -356,7 +375,8 @@ struct run_t
     int life_coins = 0;   // coins toward the next 1-up (the HUD counter); a restarted level sets it back to 0 (user, 2026-10-24)
     bool ember_bonus[level_count] = {};
     uint8_t oneup_got[level_count] = {};   // per level, a bit for each 1-up block already claimed
-    int grenades = 0; bool got_grenades = false;   // Expert: grenades in hand, and whether World 4-1 has given them yet
+    // Grenades in hand, whether he has the launcher now, and the world that gave them (0: none yet)
+    int grenades = 0; bool got_grenades = false; int grenade_world = 0;
 };
 struct lvl_t { int time = 0, deaths = 0, embers = 0, coins = 0, score = 0, coin_lives = 0, grenades = 0; bool hurt = false; };   // coin_lives: 1-ups from coins this attempt; grenades: thrown this attempt
 
@@ -385,8 +405,8 @@ constexpr bool level_lists_fit()
     for(const level_info& l : levels)
     {
         if(bn::max(l.enemies_on[0], bn::max(l.enemies_on[1], l.enemies_on[2])) + BOSS_DEMON_MAX > MAX_ENEMIES || l.movers_n > 12 || l.embers_n > 80 || l.mushrooms_n > 24 || l.checks_n > 12) return false;
-        if(l.coins_n > 192 || l.oneup_blocks_n > 8) return false;
-        int blocks = l.expert_star.x >= 0;
+        if(l.coins_n > 192 || l.oneup_blocks_n + (l.expert_oneup.x >= 0) > 8) return false;
+        int blocks = (l.expert_star.x >= 0) + (l.expert_oneup.x >= 0);
         for(int i = 0; i < ROWS * l.width; ++i) if(l.grid[i] == 4) ++blocks;
         if(blocks > 32) return false;
     }
@@ -431,6 +451,12 @@ int difficulty = 0;
 #endif
 bool hard = difficulty >= 1;
 constexpr int DIFFICULTIES = 3;
+// How many grenades he gets on coming into a world
+int world_grenades(int world)
+{
+    if(difficulty != 2) return GRENADE_START;
+    return world == 4 ? EXPERT_W4_GRENADES : EXPERT_GRENADES;
+}
 constexpr const char* difficulty_names[DIFFICULTIES] = { "Easy", "Normal", "Hard" };   // shown names (user, 2026-10-25: were Normal/Hard/Expert; code names unchanged)
 void set_difficulty(int d) { difficulty = d; hard = d >= 1; }
 
@@ -445,6 +471,7 @@ int boss_frames(int n) { return difficulty == 2 ? (n * 50 + 38) / 77 : hard_fram
 bool scores_from_title = false;
 // Time Attack (user, 2026-10-25): any level, played as on Normal, for the fastest clear (see Time Attack below)
 bool time_attack = false;
+bool hs_then_stats = false;   // after the high-score table: the end-of-game stats (true) or the title
 int ta_level = 0;               // the level picked on its screen
 int ta_prev_difficulty = 0;     // the difficulty picked before, given back on leaving Time Attack
 // The title and the screens its menu opens, over the same panning picture and title music
@@ -465,6 +492,21 @@ int tile(int tx, int ty)
     return grid[ty * level_w() + tx];
 }
 bool solid(int t) { return t == 1 || t == 4; }
+// Cracked blocks are 27 px tall (user, 2026-10-29, so standing shots hit them): one tile plus the bottom crack_rise px of
+// the (always empty) tile above, which counts as the block
+bool crack_cap(int tx, int ty) { return tile(tx, ty) == 0 && tile(tx, ty + 1) == 4; }
+fixed cap_top(int ty) { return (ty + 1) * T - crack_rise; }   // (the top of a block whose cap is in row ty)
+// The tile a point is in (tx, ty), a point in a block's raised top giving the block's tile
+int tile_px(fixed x, fixed y, int& tx, int& ty)
+{
+    tx = tdiv(x); ty = tdiv(y);
+    if(crack_cap(tx, ty) && y >= cap_top(ty)) { ++ty; return 4; }
+    return tile(tx, ty);
+}
+// The top of tile tx, ty: a cracked block's is crack_rise px higher
+fixed tile_top(int tx, int ty) { return ty * T - (tile(tx, ty) == 4 ? crack_rise : 0); }
+// Whether something whose bottom is at `bottom` and whose side is in tile tx, ty runs into it (a wall, or a block's raised top)
+bool wall_at(int tx, int ty, fixed bottom) { return solid(tile(tx, ty)) || (crack_cap(tx, ty) && bottom > cap_top(ty)); }
 fixed max_cam_x() { return level_w() * T - SCREEN_W; }
 fixed max_cam_y() { return ROWS * T - SCREEN_H; }
 fixed clamp_cam_x(fixed x) { return bn::max(fixed(0), bn::min(max_cam_x(), x)); }
@@ -516,6 +558,11 @@ void sync_music()
         want = ! boss_active() ? look().music : boss->kind == BOSS_SKULL ? &bn::music_items::boss_music : &bn::music_items::showdown_music;
         if(p.star > 0) want = &bn::music_items::star_music;   // the star's music replaces the level's or the boss's while it lasts
     }
+    // The user's "beat the game music" (2026-10-29): from the Congratulations screen through the stats (user, same day),
+    // including a new high score's initials and table in between
+    else if(state == state_t::congrats || state == state_t::win ||
+            ((state == state_t::initials || state == state_t::scores) && hs_then_stats && ! time_attack))
+        want = &bn::music_items::win_music;
     if(want != current_music)
     {
         current_music = want;
@@ -541,8 +588,11 @@ void sync_music()
             want == &bn::music_items::showdown_music ? sfx_volume_music_showdown_music * 83 / 32 :
             // The title music: the same RMS level on the GBA as World 1-1's track
             want == &bn::music_items::title_music ? sfx_volume_music_title_music * 152 / 64 :   // 155/64 until the user's 2026-10-21 edit
-            // The star's music: the same RMS level on the GBA as World 1-1's track
-            want == &bn::music_items::star_music ? sfx_volume_music_star_music * 842 / 64 :
+            // The star's music: the user's "invincibility music" since 2026-10-29, first at World 1-1's RMS level (194/64,
+            // as loud as the old star clip at 842/64), then 40% louder (user, same day)
+            want == &bn::music_items::star_music ? sfx_volume_music_star_music * 272 / 64 :
+            // The Congratulations music: the same RMS level on the GBA as World 1's track
+            want == &bn::music_items::win_music ? sfx_volume_music_win_music * 94 / 64 :
             // World 4's "World 4 Music.mp3" (the user's, 2026-10-21): first at the level Spider's Grotto had (18.8%), then
             // set to 25% at the user's request (same day)
             250));
@@ -581,7 +631,7 @@ void music_stop() { current_music = nullptr; if(bn::music::playing()) bn::music:
 // ---------- Display objects ----------
 bn::optional<bn::camera_ptr> camera;
 BN_DATA_EWRAM bn::optional<bn::sprite_text_generator> text8, text16;
-wspr mario_spr, muzzle_spr;
+wspr mario_spr, muzzle_spr, prone_spr[2];
 BN_DATA_EWRAM wspr flame_spr[FLAME_PIECES];   // the flamethrower's flame, nozzle to tip
 bool world_visible = true;   // world sprites are hidden behind the title, pause, clear and game-over text
 bool parts_visible = true;   // particles also show on the Congratulations screen (the fireworks)
@@ -911,7 +961,7 @@ void spawn_boss_demon(const boss_t& B)
     }
     enemy_t& k = *slot;
     k = enemy_t();
-    k.minion = true; k.kind = FOE_DEMON; k.w = 12; k.h = 14;
+    k.minion = true; k.kind = FOE_DEMON; k.w = demon_box_w; k.h = demon_box_h;
     k.a = B.x0; k.b = B.x1 - k.w;
     // It flies in high up on the side of the arena away from Mario
     bool left = p.x + p.w / 2 > B.cx;
@@ -1358,7 +1408,20 @@ void load_level(int index)
         rocket_item.x = L.rocket_item.x * T + 8; rocket_item.y = (L.rocket_item.y + 1) * T - 9; rocket_item.live = true;
     }
     bullets.clear(); globs.clear(); parts.clear(); floaters.clear(); booms.clear(); grenades.clear();
-    if(difficulty == 2 && ! run.got_grenades && L.name == bn::string_view("World 4-1")) { run.grenades = GRENADE_START; run.got_grenades = true; }
+    // Grenades, by world: a fresh GRENADE_START on first coming into each world (Worlds 1-3 on every difficulty, user
+    // 2026-10-29; World 4 on Expert since 2026-10-25 and on Easy and Normal too since 2026-10-29), at its first level (x-1,
+    // or wherever a Time Attack or test ROM starts in it); carried through that world, never into the next
+    const bn::string_view name = L.name;   // "World x-y"
+    const int world = name.size() > 8 ? name[6] - '0' : 0;
+    if(world >= 1 && world <= 4)
+    {
+        if(run.grenade_world != world)
+        {
+            run.grenades = world_grenades(world);
+            run.got_grenades = true; run.grenade_world = world;
+        }
+    }
+    else if(run.got_grenades) { run.grenades = 0; run.got_grenades = false; run.grenade_world = 0; }
 
     // Coins, embers, mushrooms, blocks and enemies go in left to right, for the active window (see Active window)
     const int* order = by_x(L.coins_n, [&](int i) { return L.coins[i].x; });
@@ -1391,14 +1454,18 @@ void load_level(int index)
     const bool own_star = difficulty == 2 && L.expert_star.x >= 0;
     const point star_at = own_star ? L.expert_star : L.star_block;
     if(own_star) grid[star_at.y * L.width + star_at.x] = 4;
+    // Expert's own 1-up block (World 2-1, 2026-10-31) goes in, numbered after the level's for run.oneup_got
+    const bool own_oneup = difficulty == 2 && L.expert_oneup.x >= 0;
+    if(own_oneup) grid[L.expert_oneup.y * L.width + L.expert_oneup.x] = 4;
     for(int tx = 0; tx < L.width; ++tx) for(int ty = 0; ty < ROWS; ++ty) if(grid[ty * L.width + tx] == 4)
     {
         crack_t k; k.tx = tx; k.ty = ty; k.oneup = -1;
         for(int i = 0; i < L.oneup_blocks_n; ++i) if(L.oneup_blocks[i].x == tx && L.oneup_blocks[i].y == ty) k.oneup = i;
+        if(own_oneup && L.expert_oneup.x == tx && L.expert_oneup.y == ty) k.oneup = L.oneup_blocks_n;
         if(star_at.x == tx && star_at.y == ty) k.oneup = CRACK_STAR;
         const bool old_star = own_star && L.star_block.x == tx && L.star_block.y == ty;
         if(old_star || (k.oneup >= 0 && (run.oneup_got[li] >> k.oneup & 1)) ||
-           (k.oneup == CRACK_STAR && ! own_star && ((hard && L.hard_no_star) || (difficulty == 2 && L.expert_no_star))))
+           (k.oneup == CRACK_STAR && ! own_star && ((hard && L.hard_no_star) || (difficulty == 1 && L.hard_only_no_star) || (difficulty == 2 && L.expert_no_star))))
         {
             grid[ty * L.width + tx] = 0;   // each hidden 1-up can be claimed once per run
             continue;
@@ -1443,7 +1510,9 @@ void load_level(int index)
     has_door = L.has_door;
     door = { fixed(L.door.x), fixed(L.door.y), 16, 32 };
     make_boss();
-    respawn_x = L.start.x; respawn_y = L.start.y;
+    // The level data's start is the web game's, for its 24 px tall player (WEB_PH): his feet go where that player's were
+    // (2026-10-29: used as is, the taller hero started with his feet 16 px into the ground)
+    respawn_x = L.start.x; respawn_y = L.start.y + WEB_PH - PH;
     ember_total = embers.size();
     coin_total = coins.size() + crack_count * L.block_coins;
     lvl = lvl_t();
@@ -1485,19 +1554,87 @@ void die()
     sfx::die();
 }
 
+// Down: he lies prone, PRONE_H tall (user, 2026-10-29: the prone sprite's height, 10 px, 15, then 20; 23 since 2026-10-30): with the rifle, and
+// since later that day with the flamethrower and the rocket launcher too (they crouched, CH tall, before). The picture is
+// his main weapon's (weapon_set), not the brief grenade throw's.
+int weapon_set() { return p.flame > 0 ? HERO_FLAME : p.rocket > 0 ? HERO_ROCKET : HERO_RIFLE; }
+int crouch_h() { return PRONE_H; }
+
+// Is there room for him to be h tall, feet where they are? (Checks every tile row the taller box would add.)
+bool room_for(int h)
+{
+    fixed feet = p.y + p.h;
+    if(h <= p.h) return true;
+    int t0 = tdiv(feet - h), t1 = tdiv(p.y - EPS), l = tdiv(p.x), r = tdiv(p.x + p.w - EPS);
+    for(int ty = t0; ty <= t1; ++ty) for(int tx = l; tx <= r; ++tx) if(solid(tile(tx, ty))) return false;
+    return true;
+}
+bool can_stand() { return room_for(PH); }
+
+// Sets his height, feet where they are
+void set_height(int h) { p.y += p.h - h; p.h = h; }
+
 void set_crouch(bool on)
 {
     if(p.crouch == on) return;
     p.crouch = on;
-    p.y += on ? PH - CH : CH - PH;
-    p.h = on ? CH : PH;
+    set_height(on ? crouch_h() : PH);
 }
 
-bool can_stand()
+// Lying prone, his weapon and boots reach well past his hitbox (user, 2026-10-29: the rifle went into cracked blocks), so
+// the whole prone picture (hero_prone_x0..x1 of his weapon from his middle, mirrored facing left like the draw) has to be clear of
+// walls and blocks; and he has to be able to stand up where he ends up
+bool prone_now() { return p.crouch && p.h == PRONE_H; }
+bool prone_clear(fixed x, int face)
 {
-    int ty = tdiv(p.y - (PH - CH)), l = tdiv(p.x), r = tdiv(p.x + p.w - EPS);
-    for(int tx = l; tx <= r; ++tx) if(solid(tile(tx, ty))) return false;
-    return true;
+    fixed cx = x + p.w / 2, feet = p.y + p.h;
+    const int ws = weapon_set(), x0 = hero_prone_x0[ws], x1 = hero_prone_x1[ws];
+    fixed l = face > 0 ? cx + x0 : cx + 1 - x1;
+    return ! in_wall(l, feet - PRONE_H, x1 - x0, PRONE_H) && ! in_wall(x, feet - PH, p.w, PH);
+}
+// Where he comes back at a checkpoint in tile column x: on its middle, or against whichever side keeps him (wider than a
+// tile since 2026-10-30) out of a wall or spikes beside it
+fixed check_respawn_x(fixed x, fixed y)
+{
+    const fixed spots[3] = { x + (T - PW) / 2, x + T - PW, x };
+    for(fixed s : spots)
+    {
+        bool clear = ! in_wall(s, y, PW, PH);
+        for(int ty = tdiv(y); ty <= tdiv(y + PH - 1); ++ty)
+            for(int tx = tdiv(s); tx <= tdiv(s + PW - 1); ++tx) if(tile(tx, ty) == 3) clear = false;
+        if(clear) return s;
+    }
+    return spots[0];
+}
+// Whether sliding him along the floor to x is blocked: by a wall (at his standing height), spikes, or the floor ending
+bool slide_blocked(fixed x)
+{
+    fixed feet = p.y + p.h;
+    if(in_wall(x, feet - PH, p.w, PH)) return true;
+    int l = tdiv(x), r = tdiv(x + p.w - 1), fy = tdiv(feet - 1) + 1;
+    bool floor = false;
+    for(int tx = l; tx <= r; ++tx)
+    {
+        for(int ty = tdiv(feet - p.h); ty < fy; ++ty) if(tile(tx, ty) == 3) return true;
+        int t = tile(tx, fy);
+        if(solid(t) || t == 2) floor = true;
+    }
+    return ! floor;
+}
+// Moves him the least distance (backing away from what's ahead first) to where it's clear; false if nowhere within reach.
+// He only slides along the floor: the search each way stops at the first wall, spikes or drop.
+bool fit_prone(int face)
+{
+    bool back = true, ahead = true;
+    const int ws = weapon_set();
+    for(int d = 0; d <= hero_prone_x1[ws] - hero_prone_x0[ws] && (back || ahead); ++d)
+    {
+        if(back && d && slide_blocked(p.x - d * face)) back = false;
+        if(back && prone_clear(p.x - d * face, face)) { p.x -= d * face; return true; }
+        if(ahead && d && slide_blocked(p.x + d * face)) ahead = false;
+        if(ahead && d && prone_clear(p.x + d * face, face)) { p.x += d * face; return true; }
+    }
+    return false;
 }
 
 void hurt(fixed src_x, bool spike)
@@ -1520,7 +1657,7 @@ void break_block(int tx, int ty)
 {
     grid[ty * level_w() + tx] = 0;
     fixed cx = tx * T + 8, cy = ty * T + 8;
-    BURST(cx, cy, 16, fixed(2.2), fixed(0.15), 30, P_STONE, P_STONE, P_STONE_DARK);
+    BURST(cx, cy - crack_rise / 2, 16, fixed(2.2), fixed(0.15), 30, P_STONE, P_STONE, P_STONE_DARK);   // (the middle of the tall block)
     for(crack_t& c : cracks)
     {
         if(c.tx != tx || c.ty != ty) continue;
@@ -1558,8 +1695,33 @@ void break_block(int tx, int ty)
 
 // Where the barrel's tip is in Mario's aim-up and 45-degree frames (the user's art; build-assets.js logs both): straight up,
 // right over his middle 41 px above his feet; at 45 degrees, 8.5 px ahead and 36 px up
-fixed muzzle_x() { return p.x + p.w / 2 + p.face * (p.aim == AIM_UP ? fixed(1) : p.aim == AIM_DIAG ? fixed(8) : fixed(20.5)); }
-fixed muzzle_y() { return p.aim == AIM_UP ? p.y + p.h - 36 : p.aim == AIM_DIAG ? p.y + p.h - 34 : p.y + p.h - (p.crouch ? 8 : 13); }
+// The hero's frame (the user's soldier since 2026-10-29; see hero_frames.h): aiming up or at 45 degrees has one pose
+// each, then crouching, in the air (rising, near the top, falling), walking (8 frames) and standing still
+int hero_gfx()
+{
+    if(p.throw_t > 0) return bn::min(HERO_THROW_N - 1, (p.throw_t - 1) / THROW_STEP);   // (hero_grenade's frames)
+    if(p.aim == AIM_UP) return HERO_UP;
+    if(p.aim == AIM_DIAG) return HERO_DIAG;
+    if(p.crouch) return HERO_CROUCH;
+    if(! p.ground) return HERO_AIR + (p.vy < fixed(-1.5) ? 0 : p.vy < fixed(1.5) ? 1 : 2);
+    if(bn::abs(p.vx) > fixed(0.4)) return HERO_WALK + p.step.floor_integer() % HERO_WALK_N;
+    return HERO_IDLE;
+}
+// The weapon he's drawn with (user, 2026-10-29): the flamethrower or the rocket launcher while he has one, and throwing a
+// grenade while he does (hero_grenade; it was the grenade launcher until the user's throw art, same day); the rifle otherwise
+int hero_set()
+{
+    if(p.throw_t > 0) return HERO_GRENADE;
+    if(p.flame > 0) return HERO_FLAME;
+    if(p.rocket > 0) return HERO_ROCKET;
+    return HERO_RIFLE;
+}
+// Shots leave from the weapon's tip in the frame being shown (body centre = p.x + p.w / 2, feet = p.y + p.h)
+fixed tip_x() { return fixed(hero_tip_x2[hero_set()][hero_gfx()]) / 2; }
+fixed tip_y() { return fixed(hero_tip_y2[hero_set()][hero_gfx()]) / 2; }
+fixed muzzle_x() { return p.x + p.w / 2 + p.face * tip_x(); }
+fixed muzzle_y() { return p.y + p.h - tip_y(); }
+
 // The way the gun points, per axis (both at 45 degrees, each scaled by DIAG)
 int aim_dx() { return p.aim == AIM_UP ? 0 : p.face; }
 int aim_dy() { return p.aim == AIM_AHEAD ? 0 : -1; }
@@ -1606,12 +1768,13 @@ void explode(fixed x, fixed y, const enemy_t* direct = nullptr, fixed radius = R
     shake = bn::max(shake, fixed(5));
 }
 
-// R: a grenade out of Mario's hand, thrown the way he faces (Expert, World 4 on; see GRENADE_START)
+// A grenade out of his hand, thrown the way he faces (see GRENADE_START), as his throwing animation lets go of it
 void throw_grenade()
 {
-    --run.grenades; ++lvl.grenades; p.grenade_cool = GRENADE_DELAY;
+    --run.grenades; ++lvl.grenades;
     if(grenades.full()) grenades.erase(grenades.begin());
-    grenade_t g; g.x = p.x + p.w / 2 + p.face * 6; g.y = p.y + 6; g.t = 0;
+    // From his hand in the throw's last frame (one in a wall just goes off there)
+    grenade_t g; g.x = muzzle_x(); g.y = muzzle_y(); g.t = 0;
     g.vx = p.face * (p.aim == AIM_UP ? fixed(0.8) : p.aim == AIM_DIAG ? fixed(2.6) : fixed(3.2)) + p.vx / 2;
     g.vy = p.aim == AIM_UP ? fixed(-5.5) : p.aim == AIM_DIAG ? fixed(-4.5) : fixed(-3);
     grenades.push_back(bn::move(g));
@@ -1646,7 +1809,7 @@ void update_grenades()
         g.vy = bn::min(g.vy + GRENADE_GRAVITY, fixed(6));
         fixed oy = g.y;
         g.x += g.vx; g.y += g.vy;
-        int tx = tdiv(g.x), ty = tdiv(g.y), t = tile(tx, ty);
+        int tx, ty, t = tile_px(g.x, g.y, tx, ty);
         bool boom = g.t >= GRENADE_FUSE || t == 1 || t == 3 || t == 4 || (t == 2 && g.vy > 0 && oy < ty * T + 1);
         if(! boom && boss_active() && boss->state == boss_t::fight && overlap(rect{ g.x - 3, g.y - 3, 6, 6 }, boss_box(*boss))) boom = true;
         if(! boom)
@@ -1674,13 +1837,17 @@ void shoot()
     int dx = aim_dx(), dy = aim_dy();
     fixed k = dx && dy ? DIAG : fixed(1);
     if(rocket) sfx::launch(); else sfx::shoot();
-    // The barrel reaches past Mario's body, so check the tiles between body and muzzle first: from his middle, or from
+    // The barrel reaches past the hero's body, so check the tiles between body and muzzle first: from his middle, or from
     // the top of his hitbox when aiming up
-    fixed reach = p.aim == AIM_UP ? fixed(36 - PH) : p.aim == AIM_DIAG ? fixed(12) : fixed(20.5), bx = mx - dx * k * reach, by = my - dy * k * reach;
+    // (a rocket starts with its nose 7 + ROCKET_NOSE px past the muzzle, so for one the check goes on to there: lying prone
+    // with the launcher's tip against a cracked block, the rocket would otherwise start beyond it; 2026-10-29)
+    fixed reach = p.aim == AIM_UP ? bn::max(fixed(0), tip_y() - p.h) : p.aim == AIM_DIAG ? tip_x() / DIAG : tip_x();
+    fixed bx = mx - dx * k * reach, by = my - dy * k * reach;
+    if(rocket) reach += 7 + ROCKET_NOSE;
     for(fixed s = 0; ; s = bn::min(reach, s + 4))
     {
         fixed sx = bx + dx * k * s, sy = by + dy * k * s;
-        int tx = tdiv(sx), ty = tdiv(sy), t = tile(tx, ty);
+        int tx, ty, t = tile_px(sx, sy, tx, ty);
         if(t == 4) { break_block(tx, ty); if(rocket) explode(sx, sy); return; }
         if(t == 3 && rocket) { blast_spikes(tx, ty); explode(sx, sy); return; }
         if(t == 1)
@@ -1712,7 +1879,7 @@ int flame_reach(int& btx, int& bty)
         fixed mx = muzzle_x(), my = muzzle_y();
         for(fixed s = 0; s < fixed(14) + FLAME_RANGE; s += 3)
         {
-            int tx = tdiv(mx + p.face * (s - 14) * DIAG), ty = tdiv(my - (s - 14) * DIAG), t = tile(tx, ty);
+            int tx, ty, t = tile_px(mx + p.face * (s - 14) * DIAG, my - (s - 14) * DIAG, tx, ty);
             if(t != 1 && t != 4) continue;
             if(t == 4) { btx = tx; bty = ty; }
             return bn::max(0, bn::min(FLAME_RANGE, (s - 16).floor_integer()));
@@ -1733,11 +1900,10 @@ int flame_reach(int& btx, int& bty)
         }
         return FLAME_RANGE;
     }
-    fixed cx = p.x + p.w / 2, mx = muzzle_x();
-    int ty = tdiv(muzzle_y());
+    fixed cx = p.x + p.w / 2, mx = muzzle_x(), my = muzzle_y();
     for(fixed s = 0; s < fixed(20.5) + FLAME_RANGE; s += 4)
     {
-        int tx = tdiv(cx + p.face * s), t = tile(tx, ty);
+        int tx, ty, t = tile_px(cx + p.face * s, my, tx, ty);
         if(t != 1 && t != 4) continue;
         if(t == 4) { btx = tx; bty = ty; }
         fixed edge = p.face > 0 ? fixed(tx * T) - mx : mx - (tx + 1) * T;
@@ -1822,11 +1988,18 @@ void update_player()
     ++lvl.time;
     // Crouch: hold down on the ground to duck under shots
     bool want_crouch = K.down && p.ground;
-    if(want_crouch && ! p.crouch) set_crouch(true);
+    // (going prone he backs off a wall in front of his rifle; with no room anywhere near he stays up)
+    if(want_crouch && ! p.crouch && (crouch_h() != PRONE_H || fit_prone(p.face))) set_crouch(true);
     else if(! want_crouch && p.crouch && can_stand()) set_crouch(false);
+    // His weapon changed while he's down (prone <-> crouching): shrink, or grow if there's room
+    if(p.crouch && p.h != crouch_h() && room_for(crouch_h()))
+    {
+        if(crouch_h() != PRONE_H || fit_prone(p.face)) set_height(crouch_h());
+        else if(can_stand()) set_crouch(false);
+    }
     p.aim = ! K.up || p.crouch ? AIM_AHEAD : K.left || K.right ? AIM_DIAG : AIM_UP;   // standing, running or jumping; crouching aims ahead
     int dir = (K.right ? 1 : 0) - (K.left ? 1 : 0);
-    if(dir) p.face = dir;
+    if(dir && (dir == p.face || ! prone_now() || fit_prone(dir))) p.face = dir;   // prone, he turns only if his rifle fits
     fixed acc = p.ground ? fixed(0.38) : fixed(0.26), max = fixed(2.3);
     if(p.crouch) { p.vx *= fixed(0.82); if(bn::abs(p.vx) < fixed(0.05)) p.vx = 0; }
     else if(dir) { p.vx += dir * acc; if(bn::abs(p.vx) > max) p.vx = p.vx > 0 ? max : -max; }
@@ -1850,17 +2023,23 @@ void update_player()
     // Horizontal
     p.x += p.vx;
     fixed mvx = p.x - ox;
-    int top = tdiv(p.y), bot = tdiv(p.y + p.h - EPS);
+    // While down he still collides as tall as when standing, so his slide can't take him under a low ledge he couldn't
+    // stand up from (lying prone he's shorter than a tile, and he can't move while down)
+    fixed feet = p.y + p.h;
+    int top = tdiv(p.crouch ? feet - PH : p.y), bot = tdiv(feet - EPS);
     if(mvx > 0)
     {
         int tx = tdiv(p.x + p.w - EPS);
-        for(int ty = top; ty <= bot; ++ty) if(solid(tile(tx, ty))) { p.x = tx * T - p.w; p.vx = 0; break; }
+        for(int ty = top; ty <= bot; ++ty) if(wall_at(tx, ty, feet)) { p.x = tx * T - p.w; p.vx = 0; break; }
     }
     else if(mvx < 0)
     {
         int tx = tdiv(p.x);
-        for(int ty = top; ty <= bot; ++ty) if(solid(tile(tx, ty))) { p.x = (tx + 1) * T; p.vx = 0; break; }
+        for(int ty = top; ty <= bot; ++ty) if(wall_at(tx, ty, feet)) { p.x = (tx + 1) * T; p.vx = 0; break; }
     }
+    // (his slide or a moving platform can't push his prone rifle or boots into a wall either; standing, the weapon may overlap walls so he can walk right up to them -- user, 2026-10-29)
+    fixed slid_x = p.x;
+    if(prone_now() && fit_prone(p.face) && p.x != slid_x) p.vx = 0;
 
     // Vertical
     bool was_ground = p.ground;
@@ -1869,11 +2048,11 @@ void update_player()
     int l = tdiv(p.x), r = tdiv(p.x + p.w - EPS);
     if(p.vy > 0)
     {
-        int ty = tdiv(p.y + p.h);
-        for(int tx = l; tx <= r; ++tx)
+        // (a cracked block's raised top is solid too: tile_px gives the block, tile_top its top)
+        for(int x = l; x <= r; ++x)
         {
-            int t = tile(tx, ty);
-            if(solid(t) || (t == 2 && p.pb <= ty * T + fixed(0.01))) { p.y = ty * T - p.h; p.vy = 0; p.ground = true; break; }
+            int tx, ty, t = tile_px(x * T, p.y + p.h, tx, ty);
+            if(solid(t) || (t == 2 && p.pb <= ty * T + fixed(0.01))) { p.y = tile_top(tx, ty) - p.h; p.vy = 0; p.ground = true; break; }
         }
     }
     else if(p.vy < 0)
@@ -1893,7 +2072,8 @@ void update_player()
         }
     }
     if(p.ground && ! was_ground) BURST(p.x + p.w / 2, p.y + p.h, 4, fixed(0.8), fixed(0.04), 14, P_DUST);
-    if(p.ground && bn::abs(p.vx) > fixed(0.4)) p.step += bn::abs(p.vx) * fixed(0.07);
+    // The walk cycle: the soldier's 8 frames (two strides) over about 44 px (Mario's 3 frames took 43)
+    if(p.ground && bn::abs(p.vx) > fixed(0.4)) { p.step += bn::abs(p.vx) * fixed(0.135); if(p.step >= HERO_WALK_N) p.step -= HERO_WALK_N; }
 
     // Gun
     if(p.cool > 0) p.cool -= 1;
@@ -1903,7 +2083,9 @@ void update_player()
     if(p.flame > 0 && --p.flame == 0) sfx::flame_out();
     if(p.rocket > 0 && --p.rocket == 0) sfx::rocket_out();
     flame_len = 0;
-    if(p.flame > 0)
+    // (no shooting while he throws a grenade: his hands are busy, and the throw frames have no gun to shoot from)
+    if(p.throw_t > 0) {}
+    else if(p.flame > 0)
     {
         if(K.fire)
         {
@@ -1913,7 +2095,15 @@ void update_player()
         }
     }
     else if(K.fire && p.cool <= 0) shoot();
-    if(K.grenade && run.grenades > 0 && p.grenade_cool <= 0) throw_grenade();
+    // R starts a throw (not while crouching or lying prone, on any difficulty: user, 2026-10-29); the grenade leaves his
+    // hand at THROW_RELEASE
+    if(K.grenade && run.grenades > 0 && p.grenade_cool <= 0 && p.throw_t == 0 && ! p.crouch) { p.throw_t = 1; p.grenade_cool = GRENADE_DELAY; }
+    else if(p.throw_t > 0)
+    {
+        ++p.throw_t;
+        if(p.throw_t == THROW_RELEASE && run.grenades > 0) throw_grenade();
+        if(p.throw_t > THROW_END) p.throw_t = 0;
+    }
 
     // Hazards
     rect hb = { p.x + 2, p.y + 2, fixed(p.w - 4), fixed(p.h - 2) };
@@ -2006,7 +2196,7 @@ void update_player()
     {
         if(! c.lit && overlap(pr, { c.x, c.y - 16, 16, 32 }))
         {
-            c.lit = true; respawn_x = c.x + 1; respawn_y = (c.row + 1) * T - PH;
+            c.lit = true; respawn_y = (c.row + 1) * T - PH; respawn_x = check_respawn_x(c.x, respawn_y);
             BURST(c.x + 8, c.y, 20, 2, fixed(0.03), 34, P_EMBER, P_GOLD, P_FLAME);
             sfx::check();
         }
@@ -2067,7 +2257,7 @@ bool in_wall(fixed x, fixed y, int w, int h)
 {
     for(int tx = tdiv(x); tx <= tdiv(x + w - 1); ++tx)
         for(int ty = tdiv(y); ty <= tdiv(y + h - 1); ++ty)
-            if(solid(tile(tx, ty))) return true;
+            if(wall_at(tx, ty, ty == tdiv(y + h - 1) ? y + h : fixed((ty + 1) * T))) return true;
     return false;
 }
 
@@ -2141,8 +2331,8 @@ void update_world()
     if(rocket_item.live && rocket_item.fall)
     {
         rocket_item.vy = bn::min(rocket_item.vy + fixed(0.05), fixed(1.6)); rocket_item.y += rocket_item.vy;
-        int ty = tdiv(rocket_item.y + 9), t = tile(tdiv(rocket_item.x), ty);
-        if(rocket_item.vy > 0 && (solid(t) || t == 2) && rocket_item.y + 9 - rocket_item.vy <= ty * T + 1) { rocket_item.y = ty * T - 9; rocket_item.fall = false; }
+        int tx, ty, t = tile_px(rocket_item.x, rocket_item.y + 9, tx, ty);
+        if(rocket_item.vy > 0 && (solid(t) || t == 2) && rocket_item.y + 9 - rocket_item.vy <= tile_top(tx, ty) + 1) { rocket_item.y = tile_top(tx, ty) - 9; rocket_item.fall = false; }
         if(rocket_item.y > ROWS * T + 20) rocket_item.live = false;
     }
     for(mush_t& m : active(mushes, mush_span, mushes_static))
@@ -2151,8 +2341,8 @@ void update_world()
         // Boss-fight mushrooms drift down from the sky until they land on the floor or a plank
         if(! m.fall || m.got) continue;
         m.vy = bn::min(m.vy + fixed(0.05), fixed(1.6)); m.y += m.vy;
-        int ty = tdiv(m.y + 12), t = tile(tdiv(m.x + 6), ty);
-        if(m.vy > 0 && (solid(t) || t == 2) && m.y + 12 - m.vy <= ty * T + 1) { m.y = ty * T - 12; m.fall = false; }
+        int tx, ty, t = tile_px(m.x + 6, m.y + 12, tx, ty);
+        if(m.vy > 0 && (solid(t) || t == 2) && m.y + 12 - m.vy <= tile_top(tx, ty) + 1) { m.y = tile_top(tx, ty) - 12; m.fall = false; }
         if(m.y > ROWS * T + 20) m.got = true;
     }
     for(coin_t& c : active(coins, coin_span, coins_static))
@@ -2162,12 +2352,13 @@ void update_world()
         if(c.rest) continue;
         ++c.age; c.vy = bn::min(c.vy + fixed(0.2), fixed(6));
         c.x += c.vx;
-        if(solid(tile(tdiv(c.x), tdiv(c.y)))) { c.x -= c.vx; c.vx = 0; }
+        int tx, ty;
+        if(solid(tile_px(c.x, c.y, tx, ty))) { c.x -= c.vx; c.vx = 0; }
         c.y += c.vy;
         if(c.vy > 0)
         {
-            int ty = tdiv(c.y + 5), t = tile(tdiv(c.x), ty);
-            if(solid(t) || t == 2) { c.y = ty * T - 5; c.vy = 0; c.vx = 0; c.rest = true; }
+            int t = tile_px(c.x, c.y + 5, tx, ty);
+            if(solid(t) || t == 2) { c.y = tile_top(tx, ty) - 5; c.vy = 0; c.vx = 0; c.rest = true; }
         }
         if(c.y > ROWS * T + 20) c.got = true;
     }
@@ -2178,12 +2369,13 @@ void update_world()
         if(u.rest) continue;
         ++u.age; u.vy = bn::min(u.vy + fixed(0.2), fixed(6));
         u.x += u.vx;
-        if(solid(tile(tdiv(u.x + (u.vx > 0 ? 14 : 0)), tdiv(u.y + 7)))) { u.x -= u.vx; u.vx = 0; }
+        int tx, ty;
+        if(solid(tile_px(u.x + (u.vx > 0 ? 14 : 0), u.y + 7, tx, ty))) { u.x -= u.vx; u.vx = 0; }
         u.y += u.vy;
         if(u.vy > 0)
         {
-            int ty = tdiv(u.y + 14), t = tile(tdiv(u.x + 7), ty);
-            if(solid(t) || t == 2) { u.y = ty * T - 14; u.vy = 0; u.vx = 0; u.rest = true; }
+            int t = tile_px(u.x + 7, u.y + 14, tx, ty);
+            if(solid(t) || t == 2) { u.y = tile_top(tx, ty) - 14; u.vy = 0; u.vx = 0; u.rest = true; }
         }
         if(u.y > ROWS * T + 20) u.got = true;
     }
@@ -2197,8 +2389,8 @@ void update_world()
         {
             ++st.age; st.vy = bn::min(st.vy + fixed(0.2), fixed(6));
             st.y += st.vy;
-            int ty = tdiv(st.y + 16), t = tile(tdiv(st.x + 8), ty);
-            if(st.vy > 0 && (solid(t) || t == 2)) { st.y = ty * T - 16; st.vy = 0; st.rest = true; }
+            int tx, ty, t = tile_px(st.x + 8, st.y + 16, tx, ty);
+            if(st.vy > 0 && (solid(t) || t == 2)) { st.y = tile_top(tx, ty) - 16; st.vy = 0; st.rest = true; }
             if(st.y > ROWS * T + 20) st.got = true;
         }
         else if(st.age < 10) ++st.age;
@@ -2235,7 +2427,7 @@ void update_bullets()
         int dx = b.vx > 0 ? 1 : b.vx < 0 ? -1 : 0, dy = b.vy > 0 ? 1 : b.vy < 0 ? -1 : 0;
         fixed k = dx && dy ? DIAG : fixed(1);
         fixed hx = b.rocket ? b.x + dx * k * ROCKET_NOSE : b.x, hy = b.rocket ? b.y + dy * k * ROCKET_NOSE : b.y;
-        int btx = tdiv(hx), bty = tdiv(hy), bt = tile(btx, bty);
+        int btx, bty, bt = tile_px(hx, hy, btx, bty);
         int dmg = b.rocket ? ROCKET_DMG : 1;
         if(bt == 4) { break_block(btx, bty); b.life = 0; if(b.rocket) explode(hx, hy); continue; }
         if(bt == 3 && b.rocket) { blast_spikes(btx, bty); b.life = 0; explode(hx, hy); continue; }
@@ -2295,8 +2487,9 @@ void update_foes()
         if(! e.alive || e.rise < RISE_END) continue;   // a reaper still climbing out of its grave can't attack yet
         if(e.kind == FOE_DEMON) continue;   // flying demons only fly into Mario (update_world)
         bool beast = e.kind == FOE_BEAST;
-        // A beast's mouth is near the top of its body; the others spit from their middle
-        fixed ex = e.x + e.w / 2, ey = beast ? e.y + 6 : e.y + e.h / 2, dx = px - ex, dy = py - ey;
+        // A beast's mouth is near the top of its body; aliens and reapers fire from FOE_FIRE_H above their feet; mechs spit
+        // from their middle (the shot starts 1 px above ey)
+        fixed ex = e.x + e.w / 2, ey = beast ? e.y + 6 : e.kind == FOE_MECH ? e.y + e.h / 2 : e.y + e.h - FOE_FIRE_H + 1, dx = px - ex, dy = py - ey;
         e.alert = ! p.dead && bn::abs(dx) < (beast ? BEAST_RANGE : FOE_RANGE) && bn::abs(dy) < 90;
         if(! e.alert) { e.windup = 0; continue; }
         e.dir = dx > 0 ? 1 : -1;
@@ -2328,7 +2521,8 @@ void update_foes()
     for(glob_t& g : globs)
     {
         g.x += g.vx; g.y += g.vy; --g.life; ++g.t;
-        if(solid(tile(tdiv(g.x), tdiv(g.y))))
+        int gtx, gty;
+        if(solid(tile_px(g.x, g.y, gtx, gty)))
         {
             g.life = 0;
             if(g.fire) BURST(g.x, g.y, 5, 1, fixed(0.05), 14, P_FLAME, P_EMBER, P_GOLD);
@@ -2496,17 +2690,19 @@ void update_hud()
     int lives = bn::max(0, run.lives);
     if(lives != hud_lives.value)
     {
-        bn::string<12> lv = "MARIO x"; lv += bn::to_string<4>(lives);
+        bn::string<16> lv = "HELLFIRE x"; lv += bn::to_string<4>(lives);   // the hero's name since 2026-10-29 (user)
         hud_lives.set(lives, -118, -62, false, lv);
     }
     int tenths = lvl.time / 6;
     if(tenths != hud_time.value) hud_time.set(tenths, 118, -62, true, fmt_time(lvl.time));
-    // Expert, once Mario has them: grenades left, after the lives
+    // While he has the grenade launcher (World 1; Expert's World 4): grenades left, after the lives (8 px further right
+    // since the lives read "HELLFIRE", 2026-10-29, so two-digit lives still fit). Gone again from World 2.
     if(run.got_grenades)
     {
-        if(! hud_grenade_icon) { hud_grenade_icon = bn::sprite_items::grenade.create_sprite(-38, -62, 0); hud_grenade_icon->set_bg_priority(0); }
-        if(run.grenades != hud_grenades.value) { bn::string<8> gr = "x"; gr += bn::to_string<4>(run.grenades); hud_grenades.set(run.grenades, -32, -62, false, gr); }
+        if(! hud_grenade_icon) { hud_grenade_icon = bn::sprite_items::grenade.create_sprite(-30, -62, 0); hud_grenade_icon->set_bg_priority(0); }
+        if(run.grenades != hud_grenades.value) { bn::string<8> gr = "x"; gr += bn::to_string<4>(run.grenades); hud_grenades.set(run.grenades, -24, -62, false, gr); }
     }
+    else if(hud_grenade_icon) { hud_grenade_icon.reset(); hud_grenades.clear(); }
     // Boss health bar under the HUD while the fight is on (the web game has it at the bottom, but on the GBA's smaller
     // screen the arena floor, and Mario, are right there)
     bool bar = boss_active() && state != state_t::title;
@@ -2712,8 +2908,7 @@ void draw_title()
 {
     static constexpr const char* items[MENU_ITEMS] = { "Start Game", "Time Attack", "Controls", "High Scores", "Credits" };
     clear_overlay();
-    overlay_line(-50, "SUPER MARIO");
-    overlay_line(-34, "HELLBOUND", true);
+    overlay_line(-38, "HELLBOUND", true);   // the game's name since 2026-10-29 (user; "SUPER MARIO" was a line above it)
     for(int i = 0; i < MENU_ITEMS; ++i)
     {
         bn::string<24> t;
@@ -2738,6 +2933,7 @@ void show_controls()
     overlay_line(-22, "Shoot aliens, reapers and hell beasts.");
     overlay_line(-4, "A jump   B shoot   DOWN crouch");
     overlay_line(8, "UP aim up   UP+LEFT/RIGHT diagonal");   // (user, 2026-10-20)
+    overlay_line(20, "R toss grenades");   // (user, 2026-10-29)
     overlay_line(56, "B: back");
 }
 void show_credits()
@@ -2746,7 +2942,7 @@ void show_credits()
     clear_overlay();
     overlay_line(-50, "CREDITS", true);
     overlay_line(-22, "Dreamweaver Studios");
-    overlay_line(-4, "Sprites: Goldenfrank0, ansimuz,");
+    overlay_line(-4, "Sprites: ansimuz,");   // Goldenfrank0 removed at the user's request, 2026-10-29
     overlay_line(6, "Jesse Munguia, Anokolisa");
     // Heatley Bros: the title music. Panda Beats (World 1's old track) removed at the user's request, 2026-10-21
     // Pixel 8 Beats and The Grump Sounds added, bitbybitsound.com removed (user, 2026-10-21); two lines, like the sprites
@@ -2855,16 +3051,16 @@ void clear_level()
     clear_overlay();
     if(last)
     {
-        // Beating the last level shows the Congratulations screen, with ember fireworks and the course-clear tune
+        // Beating the last level shows the Congratulations screen, with ember fireworks and its own music (sync_music;
+        // it replaced the course-clear tune at the user's request, 2026-10-29)
         state = state_t::congrats; set_dim(true);
         if(difficulty >= 1) unlock_expert();   // beating it on Hard (shown "Normal") opens Expert (shown "Hard")
-        sfx::course_clear();
         overlay_line(-52, "WORLD 4 CLEARED");   // the user's wording (2026-10-16): the last level is World 4-4
         overlay_line(-36, "CONGRATULATIONS!", true);
         overlay_line(-4, "YOU BEAT THE GAME!");   // the user's wording (2026-10-16), replacing the web game's paragraph
         bn::string<32> s = "Final score "; s += pad6(run.score);
         overlay_line(24, s);
-        overlay_line(38, "Thank you for playing Super Mario Hellbound");
+        overlay_line(38, "Thank you for playing Hellbound");
         overlay_line(60, "A: continue");
         return;
     }
@@ -2873,7 +3069,8 @@ void clear_level()
     bn::string<32> title = LV().name; title += " cleared";
     overlay_line(-54, title, true);
     bn::string<48> a = "Embers "; a += bn::to_string<4>(lvl.embers); a += '/'; a += bn::to_string<4>(ember_total);
-    a += "   Coins "; a += bn::to_string<4>(lvl.coins); a += '/'; a += bn::to_string<4>(coin_total);
+    // Coins are drawn as gems since 2026-10-29 (user)
+    a += "   Gems "; a += bn::to_string<4>(lvl.coins); a += '/'; a += bn::to_string<4>(coin_total);
     overlay_line(-26, a);
     bn::string<48> b = "Time "; b += fmt_time(lvl.time); b += "   Falls "; b += bn::to_string<4>(lvl.deaths);
     overlay_line(-14, b);
@@ -2889,9 +3086,9 @@ void show_win_stats()
 {
     state = state_t::win;
     clear_overlay(); set_dim(true);
-    overlay_line(-56, "SUPER MARIO HELLBOUND", true);
+    overlay_line(-56, "HELLBOUND", true);
     bn::string<48> a = "Embers "; a += bn::to_string<4>(run.embers); a += '/'; a += bn::to_string<4>(run.total);
-    a += "   Coins "; a += bn::to_string<6>(run.coins);
+    a += "   Gems "; a += bn::to_string<6>(run.coins);
     overlay_line(-28, a);
     bn::string<48> b = "Total time "; b += fmt_time(run.time); b += "   Falls "; b += bn::to_string<4>(run.deaths);
     overlay_line(-16, b);
@@ -2912,7 +3109,7 @@ void game_over()
     sfx::over();
     clear_overlay(); set_dim(true);
     overlay_line(-40, "GAME OVER", true);
-    bn::string<48> m = "Mario ran out of lives in "; m += LV().name; m += '.';
+    bn::string<48> m = "Hellfire ran out of lives in "; m += LV().name; m += '.';
     overlay_line(-14, m);
     // Was "Level 2 of 3   Score ..."; the line above already names the world (World 2-1 and so on), so just the score
     bn::string<32> l = "Score "; l += pad6(run.score);
@@ -2928,7 +3125,6 @@ BN_DATA_EWRAM bn::vector<bn::sprite_ptr, 4> hs_letter_spr[3];
 BN_DATA_EWRAM bn::vector<bn::sprite_ptr, 2> hs_mark_spr;
 BN_DATA_EWRAM bn::vector<bn::sprite_ptr, 16> hs_row_spr;   // the new entry's row on the table, which blinks
 int hs_letter[3], hs_pos = 0, hs_new_rank = -1, hs_reached = 0, hs_repeat = 0, hs_blink = 0;
-bool hs_then_stats = false;   // after the table: the end-of-game stats (true) or the title
 
 int hs_char_index(char c)
 {
@@ -3199,24 +3395,52 @@ void show_world_card(const bn::string_view& text)
     if(! text.empty()) overlay_line(-8, text, true);
 }
 
-// Expert: after the "WORLD 4" card, another one about the grenades Mario gets in World 4-1 (user request, 2026-10-25)
-bool grenade_card_next = false;
+// After a "WORLD n" card, another one about grenades (grenade_card_next = n): Worlds 1, 2 and 3's (every difficulty,
+// user 2026-10-29) and World 4's: on Easy and Normal like World 2's (user, 2026-10-29), on Expert its own about the
+// grenade launcher (user request, 2026-10-25)
+int grenade_card_next = 0;
+int world_card_level = -1;   // the level a card leads to (a new game's World 1-1), or -1: the next one
 
-void show_grenade_card()
+void show_grenade_card(int world)
 {
     show_world_card("");
     world_card_frames = WORLD_CARD_FRAMES * 2;   // more to read: 5 s
-    bn::sprite_ptr icon = bn::sprite_items::grenade.create_sprite(0, -28, 0);
+    // The grenade (2x) and how many he gets, "x8" ("x12" in Expert's World 4, user 2026-10-29), side by side, centred
+    const bool expert_w4 = world == 4 && difficulty == 2;
+    const int count = world_grenades(world), shift = count >= 10 ? -3 : 0;
+    bn::sprite_ptr icon = bn::sprite_items::grenade.create_sprite(-10 + shift, -28, 0);
     icon.set_scale(2); icon.set_bg_priority(0); overlay_spr.push_back(bn::move(icon));
-    overlay_line(-8, "Mario has found a grenade launcher!");   // (was "some grenades!" until the user reworded it, 2026-10-25)
-    overlay_line(6, "Launch grenades with R.");
+    bn::string<8> n = "x"; n += bn::to_string<4>(count);
+    text8->set_left_alignment(); text8->set_bg_priority(0); text8->generate(2 + shift, -28, n, overlay_spr);
+    // (the user's wording for each, 2026-10-29; Expert's World 4 card was "Hellfire has found a grenade launcher!" from
+    // 2026-10-25, "some grenades!" before that, and keeps its full stop)
+    overlay_line(-8, world == 1 ? "Hellfire has found some grenades!" : "Hellfire found more grenades!");
+    overlay_line(6, expert_w4 ? "Toss grenades with R." : "Toss grenades with R");
 }
 
 void leave_level()
 {
-    if(LV().name == bn::string_view("World 1-4")) show_world_card("WORLD 2");
-    else if(LV().name == bn::string_view("World 2-4")) show_world_card("WORLD 3");   // the user's request, 2026-10-16
-    else if(LV().name == bn::string_view("World 3-4")) { show_world_card("WORLD 4"); grenade_card_next = difficulty == 2; }   // the user's request, 2026-10-16
+    if(LV().name == bn::string_view("World 1-4")) { show_world_card("WORLD 2"); grenade_card_next = 2; }
+    else if(LV().name == bn::string_view("World 2-4")) { show_world_card("WORLD 3"); grenade_card_next = 3; }   // the user's request, 2026-10-16
+    else if(LV().name == bn::string_view("World 3-4")) { show_world_card("WORLD 4"); grenade_card_next = 4; }   // the user's request, 2026-10-16
+    else next_level();
+}
+
+// A new game from the menu or "Play again": from World 1-1 it opens with a black "WORLD 1" card, then the grenade card
+// (user, 2026-10-29); a test ROM starting further on goes straight in. (Time Attack and the test scripts use start_game.)
+void new_game(int level = 0)
+{
+    if(level != 0) { start_game(level); return; }
+    run = run_t();
+    world_card_level = 0; grenade_card_next = 1;
+    show_world_card("WORLD 1");
+}
+
+// When a card's time is up (or A/START skips it): the grenade card if one is due, else the level
+void end_world_card()
+{
+    if(grenade_card_next) { int w = grenade_card_next; grenade_card_next = 0; show_grenade_card(w); return; }
+    if(world_card_level >= 0) { int l = world_card_level; world_card_level = -1; load_level(l); start_play(); }
     else next_level();
 }
 
@@ -3353,8 +3577,9 @@ void draw()
 
     for(crack_t& c : drawn(cracks, crack_span))
     {
-        bool show = tile(c.tx, c.ty) == 4 && near_view(c.tx * T, c.ty * T, 16, 16);
-        if(ensure(c.spr, show, bn::sprite_items::crack, lk.crack_frame, 10)) place(c.spr, c.tx * T + 8, c.ty * T + 8);
+        // (16x32 sprite, the block at its bottom reaching crack_rise px above its tile)
+        bool show = tile(c.tx, c.ty) == 4 && near_view(c.tx * T, c.ty * T - crack_rise, 16, 16 + crack_rise);
+        if(ensure(c.spr, show, bn::sprite_items::crack, lk.crack_frame, 10)) place(c.spr, c.tx * T + 8, c.ty * T);
     }
     // The boss arena's gate is part of the level grid while sealed; it's drawn as a column of stone sprites
     for(int i = 0; i < 7; ++i)
@@ -3447,15 +3672,15 @@ void draw()
         }
         else if(e.kind == FOE_DEMON)
         {
-            // A flying demon beats its wings (frames 0-5), faster while it chases Mario; its body is on the sprite's centre
-            // and the art faces left
-            fixed cy = e.y + e.h / 2;
-            bool show = (e.alive || e.squish <= 24) && near_view(cx - 32, cy - 32, 64, 64);
+            // A flying demon beats its wings (frames 0-5), faster while it chases Mario; its hitbox is the wing beat's box
+            // (user, 2026-10-29), which sits demon_spr_dx2/dy2 half px off the sprite's centre; the art faces left
+            int dir = e.alert || e.volley ? e.dir : (e.vx > 0 ? 1 : -1);
+            fixed sx = cx + fixed(dir > 0 ? -demon_spr_dx2 : demon_spr_dx2) / 2, cy = e.y + e.h / 2 + fixed(demon_spr_dy2) / 2;
+            bool show = (e.alive || e.squish <= 24) && near_view(sx - 32, cy - 32, 64, 64);
             int gfx = (e.t / (e.alert ? 3 : 5)) % 6;
             bn::sprite_ptr* s = ensure(e.spr, show, bn::sprite_items::demon, gfx, 5, false, true);
             if(! s) continue;
-            int dir = e.alert || e.volley ? e.dir : (e.vx > 0 ? 1 : -1);
-            place(e.spr, cx, cy, dir > 0);
+            place(e.spr, sx, cy, dir > 0);
             set_flash(e.spr, ! e.alive || (e.hit > 0 && e.hit % 4 < 2) || (e.windup > 0 && (e.windup / 3) % 2), bn::sprite_items::demon, bn::sprite_palette_items::demon_flash);
             s->set_visible(e.alive || (e.squish / 2) % 2 == 0);
         }
@@ -3570,16 +3795,38 @@ void draw()
 
     // Mario
     bool show_mario = state != state_t::title && ! p.dead && ! (p.inv > 0 && (p.inv / 4) % 2);
-    int gfx = p.crouch ? 3 : ! p.ground ? 1 : bn::abs(p.vx) > fixed(0.4) ? p.step.floor_integer() % 3 : 0;
-    if(p.aim == AIM_UP) gfx += 4;   // frames 4-6: the user's aiming-up art (one pose, standing, running and jumping)
-    else if(p.aim == AIM_DIAG) gfx += 7;   // frames 7-9: the user's 45-degree art (one pose, like aiming up)
-    if(ensure(mario_spr, show_mario, bn::sprite_items::mario, gfx, 0, false, true))
+    // One sheet (and palette) per weapon: a new weapon means a new sprite
+    static constexpr const bn::sprite_item* hero_items[4] = { &bn::sprite_items::hero, &bn::sprite_items::hero_flame,
+                                                              &bn::sprite_items::hero_rocket, &bn::sprite_items::hero_grenade };
+    static int shown_set = -1;
+    int set = hero_set();
+    if(set != shown_set) { mario_spr.reset(); shown_set = set; }
+    // With the star the hero flashes, slower in its last two seconds
+    int star_k = p.star <= 0 || p.dead ? 0 : (frame / (p.star > STAR_WARN ? 3 : 6)) % 4;
+    // Lying prone (any weapon), when it's too long for one sprite (hero_prone_wide, see build-assets):
+    // two 64x64 sprites side by side (<sheet>_prone frames 0 and 1, a 128x64 picture with the body centre on column 64, 63
+    // when flipped)
+    bool prone2 = set != HERO_GRENADE && hero_prone_wide[set] && hero_gfx() == HERO_CROUCH;
+    const bn::sprite_item& prone_item = set == HERO_FLAME ? bn::sprite_items::hero_flame_prone :
+        set == HERO_ROCKET ? bn::sprite_items::hero_rocket_prone : bn::sprite_items::hero_prone;
+    static int prone_shown = -1;
+    if(prone2 && set != prone_shown) { prone_spr[0].reset(); prone_spr[1].reset(); prone_shown = set; }
+    if(ensure(mario_spr, show_mario && ! prone2, *hero_items[set], hero_gfx(), 0, false, true))
     {
         // 64x64 frames: body centre is column 24 of the frame (column 39 when flipped); the feet are on the bottom row
-        fixed tlx = p.x + 7 - (p.face > 0 ? 24 : 39);
+        fixed tlx = p.x + PW / 2 - (p.face > 0 ? 24 : 39);
         place(mario_spr, tlx + 32, p.y + p.h - 32, p.face < 0);
-        // With the star Mario flashes, slower in its last two seconds
-        star_flash(mario_spr, p.star <= 0 || p.dead ? 0 : (frame / (p.star > STAR_WARN ? 3 : 6)) % 4);
+        star_flash(mario_spr, star_k);
+    }
+    for(int i = 0; i < 2; ++i)
+    {
+        // Facing left the picture is mirrored, so the left sprite shows the right half (flipped) and the other way round
+        if(ensure(prone_spr[i], show_mario && prone2, prone_item, p.face > 0 ? i : 1 - i, 0, false, true))
+        {
+            fixed tlx = p.x + PW / 2 - (p.face > 0 ? 64 : 63);
+            place(prone_spr[i], tlx + 32 + i * 64, p.y + p.h - 32, p.face < 0);
+            star_flash(prone_spr[i], star_k);
+        }
     }
     bool show_flash = state != state_t::title && ! p.dead && p.flash > 0;
     if(ensure(muzzle_spr, show_flash, bn::sprite_items::muzzle, p.aim == AIM_UP ? 1 : p.aim == AIM_DIAG ? 2 : 0, -1, false, true))
@@ -3632,7 +3879,7 @@ void read_keys()
     K = keys_t();
     if(f == 150)
     {
-        static constexpr int scene_level[] = { 0, 0, 0, 4, 15, 15, 4, 0, 4, 4, 1, 2, 3, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 0, 15, 2, 7, 15, 1, 4, 9, 12, 1, 2, 4, 12, 4, 3, 13, 2, 1, 0, 0, 4, 8, 0, 3, 0, 7, 12, 0, 0, 4, 6, 11, 0, 12, 11, 0, 6 };   // level indexes: 4 Graveyard, 8 City, 12 World 4-1, 15 Hell
+        static constexpr int scene_level[] = { 0, 0, 0, 4, 15, 15, 4, 0, 4, 4, 1, 2, 3, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 0, 15, 2, 7, 15, 1, 4, 9, 12, 1, 2, 4, 12, 4, 3, 13, 2, 1, 0, 0, 4, 8, 0, 3, 0, 7, 12, 0, 0, 4, 6, 11, 0, 12, 11, 0, 6, 0, 15, 12, 0, 0, 3, 0, 0, 0, 0, 0, 1, 0, 4, 14, 4, 4, 14, 15, 14 };   // level indexes: 4 Graveyard, 8 City, 12 World 4-1, 15 Hell
 #if SMHB_SCENE == 42 || SMHB_SCENE == 47 || SMHB_SCENE == 58 || SMHB_SCENE == 60
         return;   // this one starts from the title
 #endif   // level indexes: 4 Graveyard, 8 City, 12 World 4-1, 15 Hell
@@ -3651,6 +3898,130 @@ void read_keys()
     K.fire = g > 10 && g < 420;
     K.jump = g >= 330 && g < 420 && (g % 55) < 22;
     K.a_pressed = g >= 330 && g < 420 && (g % 55) == 1;
+#elif SMHB_SCENE == 65
+    // Standing rifle vs a wall in World 1-4 (Jungle 4): walks right into the 2-tile wall at col 59 (the rifle should stop
+    // at its edge; ~1.5 s), firing from ~2 s
+    if(g == 2) teleport(55, 14);
+    K.right = g > 5 && g < 150;
+    K.fire = g > 110;
+#elif SMHB_SCENE == 64
+    // Prone with the rifle in World 1-1: right up against the cracked block at col 65 (open floor behind him), facing it,
+    // lies down (he backs off so his rifle stays out of it; ~1.5 s), fires (~2.3 s), then turned left (from ~3 s)
+    if(g == 2) teleport(64, 14);
+    K.right = g > 5 && g < 9;
+    K.left = g >= 150 && g < 156;
+    K.down = (g > 12 && g < 150) || g > 165;
+    K.fire = (g > 110 && g < 150) || g > 165;
+#elif SMHB_SCENE == 63
+    // The rifle aimed at 45 degrees (UP + RIGHT, standing and walking) and straight up, firing, in World 1-1
+    if(g == 2) teleport(42, 14);
+    K.up = g > 10;
+    K.right = g > 10 && g < 200;
+    K.fire = g > 10;
+#elif SMHB_SCENE == 76
+    // Expert's own star block in World 2-1 (col 99, 2026-10-31): he shoots it from the checkpoint at col 97, then takes the
+    // star (and stops short of the gap). On other difficulties there's no block and he just stands there.
+    p.hp = MAX_HP;
+    if(g == 2) { teleport(97, 14); p.face = 1; }
+    K.fire = g > 40 && g < 100;
+    K.right = g > 120 && g < 150 && p.x < 98 * T;
+#elif SMHB_SCENE == 75
+    // Expert's own 1-up block in World 2-1 (col 296, 2026-10-31): he shoots it from the right, then takes the 1-up. On other
+    // difficulties there's no block and he just stands there.
+    p.hp = MAX_HP;
+    if(g == 2) { teleport(297, 11); p.face = -1; }
+    K.fire = g > 40 && g < 100;
+    K.left = g > 120 && g < 150;
+#elif SMHB_SCENE == 78
+    // World 4-4's embers over spikes (raised 2026-10-31): a full running jump at cols 44-45, a standing start at 464-465.
+    // 4 embers and full health if it works
+    if(g == 3) for(enemy_t& e : enemies) { e.alive = false; e.squish = 1000; }
+    if(g == 2) { teleport(41, 13); p.face = 1; }
+    if(g == 240) { teleport(462, 14); p.x = 462 * T; p.face = 1; }
+    {
+        int base = (g < 240 ? 41 : 462) * T;
+        K.right = g > 5 && g != 240 && fixed(p.x) < base + 7 * T;
+        K.jump = g > 5;
+        K.a_pressed = p.ground && g < 240 ? fixed(p.x) >= base + 10 && fixed(p.x) < base + 2 * T : p.ground && g > 241 && fixed(p.x) < base + T;
+    }
+#elif SMHB_SCENE == 77
+    // World 4-3's spikes before the wall (cols 308 and 658, moved left 2026-10-31): take the ember, jump the spikes, land
+    // in the gap, jump onto the wall. Health stays full if it works
+    if(g == 3) for(enemy_t& e : enemies) { e.alive = false; e.squish = 1000; }
+    if(g == 2) { teleport(304, 13); p.face = 1; }
+    if(g == 240) { teleport(654, 13); p.face = 1; }
+    {
+        int base = (g < 240 ? 300 : 650) * T;
+        K.right = g > 5 && g != 240 && fixed(p.x) < base + 14 * T;
+        K.jump = g > 5;
+        K.a_pressed = p.ground && ((fixed(p.x) >= base + 5 * T + 6 && fixed(p.x) < base + 6 * T)
+                                   || (fixed(p.x) >= base + 10 * T && fixed(p.x) < base + 13 * T));
+    }
+#elif SMHB_SCENE == 74
+    // World 4-3's way on (col 368): the cracked block at the top of the wall has to be shot from a jump, then he climbs
+    // the wall and goes on over the top (26 px wide hitbox, 2026-10-30)
+    p.hp = MAX_HP;
+    if(g == 2) { teleport(365, 12); p.face = 1; }
+    K.right = (g > 5 && g < 30) || (g > 80 && p.x < 380 * T);
+    K.jump = (g > 30 && g < 50) || (g > 80 && g < 100) || (g > 130 && g < 150);
+    K.a_pressed = g == 31 || g == 81 || g == 131;
+    K.fire = g > 30 && g < 70;
+#elif SMHB_SCENE == 73
+    // Respawn beside a wall (2026-10-30, hitbox 26 px wide): World 2-1's checkpoint at col 151 has a wall next to it; he
+    // touches it at g 2, dies at g 60 and comes back clear of the wall
+    if(g == 2) teleport(151, 13);
+    if(g == 60) die();
+    if(! p.dead) p.hp = MAX_HP;
+#elif SMHB_SCENE == 72
+    // Tall cracked blocks (2026-10-29: 27 px): World 1-1, jumping from col 62 onto the block at col 65 (~1 s), standing on
+    // it (~1-3 s, shooting from ~2 s), then walking off the far side (~3.5 s)
+    p.hp = MAX_HP;
+    if(g == 2) { teleport(62, 14); p.face = 1; }
+    K.right = (g > 10 && g < 26) || (g > 200 && g < 215);
+    K.jump = g > 10 && g < 30;
+    K.a_pressed = g == 11;
+    K.fire = g > 120 && g < 200;
+#elif SMHB_SCENE == 71
+    // World 1-2's start, standing still with the rifle (2026-10-29: the user saw his feet ~10-15 px too low here)
+    p.hp = MAX_HP;
+#elif SMHB_SCENE == 69 || SMHB_SCENE == 70   // 70: the same with the rocket launcher
+    // Prone with the flamethrower (2026-10-29): scene 64's spot in World 1-1 with the flamethrower, lying down facing the
+    // block (~1.5 s), flaming (~2.5 s), then turned left still flaming (from ~3.5 s)
+    if(g == 2) { teleport(64, 14); if(SMHB_SCENE == 69) p.flame = FLAME_TIME; else p.rocket = ROCKET_TIME; }
+    K.right = g > 5 && g < 9;
+    K.left = g >= 180 && g < 186;
+    K.down = g > 12;
+    K.fire = g > 110;
+#elif SMHB_SCENE == 68
+    // No grenades while down (2026-10-29): World 1-1 prone with R held for ~2 s (still x8), then standing with R held (x8 drops)
+    // (at scene 64's spot, where there's room to lie down: col 64 facing the block at col 65)
+    if(g == 2) teleport(64, 14);
+    K.right = g > 5 && g < 9;
+    K.down = g > 12 && g < 150;
+    K.grenade = g > 40 && g < 220;
+#elif SMHB_SCENE == 67
+    // A new game's opening cards (2026-10-29): "WORLD 1" (2.5 s), then World 1's grenade card with x8 (5 s), then World 1-1
+    if(g == 2) new_game();
+#elif SMHB_SCENE == 66
+    // World 1's and 2's grenades (2026-10-29): 8 in World 1-1, two thrown (6 left), carried through 1-2..1-4 (each left
+    // as if cleared); a fresh 8 in World 2-1 (after the "WORLD 2" card and World 2's grenade card, ~g 950), one thrown
+    // (7 left), carried through 2-2..2-4; a fresh 8 in World 3-1 (after the "WORLD 3" card and World 3's grenade card,
+    // ~g 1850), three thrown (5 left), carried through 3-2..3-4, then a fresh 8 in World 4-1 on every difficulty (after
+    // "WORLD 4", ~g 2450; Expert also has its grenade card first)
+    K.grenade = (g > 10 && g < 50) || (g > 1000 && g < 1020) || (g > 1900 && g < 1980);
+    if(g == 200 || g == 300 || g == 400 || g == 500 || g == 1100 || g == 1200 || g == 1300 || g == 1400 ||
+       g == 2000 || g == 2100 || g == 2200 || g == 2300) leave_level();
+#elif SMHB_SCENE == 62
+    // The grenade launcher pose (Expert): World 4-1 at scene 56's spot, firing grenades back to back (the pose shows
+    // while grenade_cool runs, so for ~4 s until the 8 are gone)
+    if(g == 2) { teleport(431, 10); p.face = -1; }
+    K.grenade = g > 10;
+#elif SMHB_SCENE == 61
+    // The Congratulations screen and its music: World 4-4 cleared straight away (captures from ~3 s show the screen)
+    // then on to the stats (via the initials and the table when the score makes the top 5; the music carries on)
+    if(g == 2) clear_level();
+    K.a_pressed = g == 200 || g == 450;
+    K.start_pressed = g == 350;
 #elif SMHB_SCENE == 56
     // Grenades (Expert): World 4-1 between the beasts at columns 427 and 436 (the crowded stretch), facing left;
     // one thrown ahead, one aiming up-left, one aiming up, then one at the beasts after walking left. Shot captures show
@@ -3695,7 +4066,7 @@ void read_keys()
     if(got_at < 0 && run.lives > MAX_LIVES) got_at = g;
     K.left = g == 5 || (g > 120 && (got_at < 0 || g < got_at + 15));
     K.fire = g > 10 && g < 40;
-#elif SMHB_SCENE == 23 || SMHB_SCENE == 24 || SMHB_SCENE == 49 || SMHB_SCENE == 53 || SMHB_SCENE == 54   // 49: World 4-1 (no star block on Hard), 53/54: World 2-3/3-4 (none on Expert)
+#elif SMHB_SCENE == 23 || SMHB_SCENE == 24 || SMHB_SCENE == 49 || SMHB_SCENE == 53 || SMHB_SCENE == 54 || SMHB_SCENE == 79   // 49: World 4-1 (no star block on Hard), 53/54: World 2-3/3-4 (none on Expert), 24/79: World 4-4/4-3 (none on Hard alone)
     // (Expert's own block in World 4-1 is just past a pit: shot from 4 columns right of it instead, facing left)
     const bool from_right = difficulty == 2 && LV().expert_star.x >= 0;
     if(g == 2)
@@ -3846,6 +4217,7 @@ void read_keys()
     if(g == 30) K.start_pressed = true;
     if(g == 90 || g == 120) K.down_pressed = true;
     if(g == 150) K.a_pressed = true;
+    if(g == 190 || g == 230) K.a_pressed = true;   // (skips the "WORLD 1" and grenade cards, 2026-10-29)
     if(g == 240 && state == state_t::play) { run.score = 23456; game_over(); }
     if(g == 300) K.start_pressed = true;
     if(g == 360) K.start_pressed = true;
@@ -3993,7 +4365,8 @@ static void show_splash(const bn::regular_bg_item& item, int hold)
     {
         text16->set_center_alignment();
         text16->set_bg_priority(0);
-        text16->generate(0, 66, "PRESS START", prompt);
+        // Below the hero's shoulders on the title picture (user, 2026-10-30; it was at y 30, and y 66 before that)
+        text16->generate(0, 50, "PRESS START", prompt);
     }
     int t = 0, out = -1;   // out: frames into the fade-out, once it has started
     while(out < fade_out)
@@ -4031,7 +4404,7 @@ int main()
     // Not in the self-playing test builds, whose scripts and capture times assume the title comes first
     show_splash(bn::regular_bg_items::dw_logo, 120);      // the Dreamweaver Studios logo, two seconds
     sync_music();                                         // the title music starts with the title picture
-    show_splash(bn::regular_bg_items::title_art, -1);     // the Super Mario Hellbound title picture, until START
+    show_splash(bn::regular_bg_items::title_art, -1);     // the Hellbound title picture, until START
 #endif
     load_level(title_level);
     show_title();
@@ -4051,7 +4424,7 @@ int main()
         }
         else if(state == state_t::difficulty)
         {
-            if(K.start_pressed || K.a_pressed) { time_attack = false; start_game(SMHB_START_LEVEL); jump_buf = 0; }
+            if(K.start_pressed || K.a_pressed) { time_attack = false; new_game(SMHB_START_LEVEL); jump_buf = 0; }
             else update_difficulty();
         }
         else if(state == state_t::initials) update_initials();
@@ -4089,8 +4462,7 @@ int main()
             ++world_card_t;
             if(world_card_t >= world_card_frames || (world_card_t >= WORLD_CARD_SKIP && (K.a_pressed || K.start_pressed)))
             {
-                if(grenade_card_next) { grenade_card_next = false; show_grenade_card(); }
-                else { next_level(); jump_buf = 0; }
+                end_world_card(); jump_buf = 0;
             }
         }
         else if(state == state_t::congrats)
@@ -4099,7 +4471,7 @@ int main()
         }
         else if(state == state_t::win)
         {
-            if(K.a_pressed) { start_game(); jump_buf = 0; }
+            if(K.a_pressed) { new_game(); jump_buf = 0; }
             else if(K.start_pressed) show_title();
         }
         else if(state == state_t::over)
@@ -4110,7 +4482,7 @@ int main()
 
         tick();
         sync_music();
-        flame_audio(state == state_t::play && ! p.dead && p.flame > 0 && K.fire);
+        flame_audio(state == state_t::play && ! p.dead && p.flame > 0 && K.fire && p.throw_t == 0);
         draw();
         dmg_sfx::update();
         bn::core::update();

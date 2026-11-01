@@ -195,16 +195,30 @@ const HARD_DROP_MUSH = { 'Underworld 1': 3, 'Underworld 2': 3, 'Underworld 3': 3
 // Expert has one red mushroom fewer than Hard in every level (user request, 2026-10-24): hardDropMush's next pick after
 // Hard's (it picks one at a time, so its first picks are Hard's own); level_info::expert_skip_mushrooms
 const EXPERT_DROP_MUSH = 1;
+// Except here (user request, 2026-10-31): Expert keeps this level's mushrooms
+const EXPERT_KEEP_MUSH = new Set(['Jungle 2']);
 // Hard leaves out these levels' star block (World 4-1, user, 2026-10-24); level_info::hard_no_star
 const HARD_NO_STAR = new Set(['Underworld 1']);
+// Hard alone (not Expert) leaves out these levels' star block (Worlds 4-3 and 4-4, user, 2026-11-01);
+// level_info::hard_only_no_star
+const HARD_ONLY_NO_STAR = new Set(['Underworld 3', 'Hell']);
 // Expert leaves out these levels' rocket launcher (World 3-2, user, 2026-10-24); level_info::expert_no_rocket
 const EXPERT_NO_ROCKET = new Set(['City 2']);
-// Expert leaves out these levels' star block (Worlds 2-3 and 3-4, user, 2026-10-24); level_info::expert_no_star
-const EXPERT_NO_STAR = new Set(['Graveyard 3', 'City 4']);
+// Expert leaves out these levels' star block (World 2-3, user, 2026-10-24; World 3-4's too until 2026-10-31, user);
+// level_info::expert_no_star
+const EXPERT_NO_STAR = new Set(['Graveyard 3']);
 // Expert's own star block, [col, row], where the level's (if any) is left out (World 4-1, user, 2026-10-25: "an area
 // crowded with enemies" -- 4 beasts and 2 demons within a screen on Expert, the most of any legal block spot, by the
 // star block rules); level_info::expert_star. Not a builder call, so the checkers don't see it.
-const EXPERT_STAR = { 'Underworld 1': [423, 9] };
+// (World 2-1, user, 2026-10-31: about 25% through, at the end of the floor before the gap, 2 cols past the checkpoint;
+// that level has no star of its own)
+const EXPERT_STAR = { 'Underworld 1': [423, 9], Graveyard: [99, 13] };
+// Patrols Expert leaves out, exact [a, b, row] as they stand on Expert (World 3-4 -5, user, 2026-10-31: from the most
+// crowded stretches, by repeatedly taking the mech with the most others within 15 columns)
+const EXPERT_DROP_ENEMIES = { 'City 4': [[396, 400, 9], [188, 189, 9], [417, 419, 12], [190, 192, 9], [408, 411, 12]] };
+// Expert's own 1-up block, [col, row], besides the level's (World 2-1, user, 2026-10-31); level_info::expert_oneup.
+// Not a builder call either, so the checkers don't see it.
+const EXPERT_ONEUP = { Graveyard: [296, 10] };
 function hardDropMush(def, calls, n, extra = []) {
   const L = mod.exports.build({ ...def, build: b => { for (const [m, a] of calls) b[m](...a); } });
   const exit = L.boss ? L.boss.gate : Math.floor(L.door.x / 16), start = Math.floor(L.start.x / 16);
@@ -539,10 +553,10 @@ const LEVELS = ordered.map(d => {
   const build = b => { for (const [m, a] of calls) b[m](...a); };
   const hardFlyers = HARD_FLYERS[d.name] ? hardFlyerSpots({ ...d, w }, calls, flyers, HARD_FLYERS[d.name]) : [];
   return { ...d, w, calls, build, star, flame, rocket, flyers, hardSplits: HARD_SPLITS[d.name] ? hardSplits(calls, HARD_SPLITS[d.name]) : [], hardEnemies: HARD_ENEMIES[d.name] || [], hardDropCheck: hardDropCheck({ ...d, w }, calls),
-    hardBlue, hardNoStar: HARD_NO_STAR.has(d.name), expertNoRocket: EXPERT_NO_ROCKET.has(d.name), expertNoStar: EXPERT_NO_STAR.has(d.name), expertStar: EXPERT_STAR[d.name] || null, hardDropMush: HARD_DROP_MUSH[d.name] ? hardDropMush({ ...d, w }, calls, HARD_DROP_MUSH[d.name], hardBlue ? [hardBlue[0]] : []) : [],
-    expertDropMush: hardDropMush({ ...d, w }, calls, (HARD_DROP_MUSH[d.name] || 0) + EXPERT_DROP_MUSH, hardBlue ? [hardBlue[0]] : []),
+    hardBlue, hardNoStar: HARD_NO_STAR.has(d.name), hardOnlyNoStar: HARD_ONLY_NO_STAR.has(d.name), expertNoRocket: EXPERT_NO_ROCKET.has(d.name), expertNoStar: EXPERT_NO_STAR.has(d.name), expertStar: EXPERT_STAR[d.name] || null, expertOneup: EXPERT_ONEUP[d.name] || null, hardDropMush: HARD_DROP_MUSH[d.name] ? hardDropMush({ ...d, w }, calls, HARD_DROP_MUSH[d.name], hardBlue ? [hardBlue[0]] : []) : [],
+    expertDropMush: hardDropMush({ ...d, w }, calls, (HARD_DROP_MUSH[d.name] || 0) + (EXPERT_KEEP_MUSH.has(d.name) ? 0 : EXPERT_DROP_MUSH), hardBlue ? [hardBlue[0]] : []),
     expertSplits: EXPERT_SPLITS[d.name] ? hardSplits(hardPatrols(calls, HARD_SPLITS[d.name] ? hardSplits(calls, HARD_SPLITS[d.name]) : [], HARD_ENEMIES[d.name] || []).map(a => ['enemy', a]), EXPERT_SPLITS[d.name], EXPERT_SPLIT_MIN[d.name] || 4) : [],
-    expertEnemies: EXPERT_ENEMIES[d.name] || [],
+    expertEnemies: EXPERT_ENEMIES[d.name] || [], expertDropEnemies: EXPERT_DROP_ENEMIES[d.name] || [],
     hardFlyers, expertFlyers: EXPERT_FLYERS[d.name] ? hardFlyerSpots({ ...d, w }, calls, [...flyers, ...hardFlyers], EXPERT_FLYERS[d.name]) : [], blockCoins: perBlock ?? Math.round(5 * scale), half: half ? { at: half.at, len: half.len } : null };
 });
 
@@ -552,4 +566,18 @@ function defSource(def, name = def.name, prelude = '') {
   return `{ name: ${JSON.stringify(name)}, w: ${def.w}, foe: ${JSON.stringify(def.foe)}, build: function (b) { ${prelude}${body} } }`;
 }
 
-module.exports = { LEVELS, build: mod.exports.build, buildSrc, defSource, WEB };
+// The embers two rows over spikes in World 4 and 2-1 (just the pair at cols 120-121 there; the others are three
+// rows up) sit EMBER_LIFT px higher (user requests, 2026-10-31): at their old height a full jump over the spikes passed
+// above them. From 20 px up, every full jump that clears the spikes takes both.
+// Only the game's data changes: the placement and reachability checks still see them on their tile rows.
+const EMBER_LIFT = 20, EMBER_LIFT_LEVELS = new Set(['Underworld 1', 'Underworld 2', 'Underworld 3', 'Hell', 'Graveyard']);
+function build(def) {
+  const L = mod.exports.build(def);
+  if (EMBER_LIFT_LEVELS.has(def.name)) for (const e of L.embers) {
+    const col = Math.floor(e.x / 16), row = Math.floor(e.y / 16);
+    if (L.grid[row + 2] && L.grid[row + 2][col] === 3) e.y -= EMBER_LIFT;
+  }
+  return L;
+}
+
+module.exports = { LEVELS, build, buildSrc, defSource, WEB };
