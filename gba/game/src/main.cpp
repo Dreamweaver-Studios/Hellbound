@@ -3099,7 +3099,7 @@ void show_win_stats()
     if(best < 0 || run.time < best) { write_best(run.time); if(best < 0) bt = "First full run recorded"; else { bt = "New best time (was "; bt += fmt_time(best); bt += ")"; } }
     else { bt = "Best time "; bt += fmt_time(best); }
     overlay_line(16, bt);
-    overlay_line(46, "A: play again     START: title");
+    overlay_line(46, "A: play again");
 }
 
 void game_over()
@@ -3426,7 +3426,7 @@ void leave_level()
     else next_level();
 }
 
-// A new game from the menu or "Play again": from World 1-1 it opens with a black "WORLD 1" card, then the grenade card
+// A new game from the menu: from World 1-1 it opens with a black "WORLD 1" card, then the grenade card
 // (user, 2026-10-29); a test ROM starting further on goes straight in. (Time Attack and the test scripts use start_game.)
 void new_game(int level = 0)
 {
@@ -4281,7 +4281,10 @@ void read_keys()
     if(state == state_t::congrats && end_t == 360) K.a_pressed = true;
     if(state == state_t::initials && end_t == 400) K.start_pressed = true;   // keep the last initials (a high score on a new save)
     if(state == state_t::scores && end_t == 440) K.a_pressed = true;
-    if(state == state_t::win && end_t == 480) K.a_pressed = true;   // then "play again" from the stats
+    if(state == state_t::win && end_t == 480) K.a_pressed = true;   // then "play again" from the stats, back to the title
+    if(end_t >= 480 && (state == state_t::title || state == state_t::difficulty)) ++end_t;
+    if(state == state_t::title && end_t == 560) K.a_pressed = true;   // and a new game from there
+    if(state == state_t::difficulty && end_t == 600) K.a_pressed = true;
 #endif
 #else
     K.left = bn::keypad::left_held();
@@ -4471,8 +4474,7 @@ int main()
         }
         else if(state == state_t::win)
         {
-            if(K.a_pressed) { new_game(); jump_buf = 0; }
-            else if(K.start_pressed) show_title();
+            if(K.a_pressed || K.start_pressed) { show_title(); jump_buf = 0; }
         }
         else if(state == state_t::over)
         {
