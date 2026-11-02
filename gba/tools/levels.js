@@ -197,8 +197,8 @@ const HARD_DROP_MUSH = { 'Underworld 1': 3, 'Underworld 2': 3, 'Underworld 3': 3
 const EXPERT_DROP_MUSH = 1;
 // Except here (user request, 2026-10-31): Expert keeps this level's mushrooms
 const EXPERT_KEEP_MUSH = new Set(['Jungle 2']);
-// Hard leaves out these levels' star block (World 4-1, user, 2026-10-24); level_info::hard_no_star
-const HARD_NO_STAR = new Set(['Underworld 1']);
+// Hard leaves out these levels' star block (none now: World 4-1's came back, user, 2026-11-01); level_info::hard_no_star
+const HARD_NO_STAR = new Set([]);
 // Hard alone (not Expert) leaves out these levels' star block (Worlds 4-3 and 4-4, user, 2026-11-01);
 // level_info::hard_only_no_star
 const HARD_ONLY_NO_STAR = new Set(['Underworld 3', 'Hell']);

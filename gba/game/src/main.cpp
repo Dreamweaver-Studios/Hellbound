@@ -4066,7 +4066,7 @@ void read_keys()
     if(got_at < 0 && run.lives > MAX_LIVES) got_at = g;
     K.left = g == 5 || (g > 120 && (got_at < 0 || g < got_at + 15));
     K.fire = g > 10 && g < 40;
-#elif SMHB_SCENE == 23 || SMHB_SCENE == 24 || SMHB_SCENE == 49 || SMHB_SCENE == 53 || SMHB_SCENE == 54 || SMHB_SCENE == 79   // 49: World 4-1 (no star block on Hard), 53/54: World 2-3/3-4 (none on Expert), 24/79: World 4-4/4-3 (none on Hard alone)
+#elif SMHB_SCENE == 23 || SMHB_SCENE == 24 || SMHB_SCENE == 49 || SMHB_SCENE == 53 || SMHB_SCENE == 54 || SMHB_SCENE == 79   // 49: World 4-1, 53/54: World 2-3/3-4 (none on Expert), 24/79: World 4-4/4-3 (none on Hard alone)
     // (Expert's own block in World 4-1 is just past a pit: shot from 4 columns right of it instead, facing left)
     const bool from_right = difficulty == 2 && LV().expert_star.x >= 0;
     if(g == 2)
