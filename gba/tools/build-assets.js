@@ -120,6 +120,65 @@ function downscale(src, w, h) {
   }
   return c;
 }
+// Lanczos-3 resample of an RGBA canvas (premultiplied, separable): sharper than downscale()'s box average when shrinking
+// detailed art by ~3x (the hero, user 2026-11-03: "improve the sharpness and clarity")
+function lanczos(src, w, h, a = 3) {
+  const L = x => x === 0 ? 1 : Math.abs(x) >= a ? 0 : a * Math.sin(Math.PI * x) * Math.sin(Math.PI * x / a) / (Math.PI * Math.PI * x * x);
+  // One pass along x (horiz) or y: inp is iw x ih floats (4 per pixel), the output is n long on that axis
+  const pass = (inp, iw, ih, n, horiz) => {
+    const len = horiz ? iw : ih, scale = len / n, lines = horiz ? ih : iw, out = new Float32Array((horiz ? n * ih : iw * n) * 4);
+    for (let i = 0; i < n; i++) {
+      const c = (i + 0.5) * scale, ws = []; let tot = 0;
+      for (let j = Math.floor(c - a * scale); j <= Math.ceil(c + a * scale); j++) { const v = L((j + 0.5 - c) / scale); ws.push([Math.min(len - 1, Math.max(0, j)), v]); tot += v; }
+      for (let l = 0; l < lines; l++) {
+        const o = (horiz ? l * n + i : i * iw + l) * 4;
+        for (const [j, v] of ws) { const s = (horiz ? l * iw + j : j * iw + l) * 4; for (let k = 0; k < 4; k++) out[o + k] += inp[s + k] * v / tot; }
+      }
+    }
+    return out;
+  };
+  const pre = new Float32Array(src.w * src.h * 4);
+  for (let i = 0; i < src.w * src.h; i++) { const al = src.d[i * 4 + 3] / 255; for (let k = 0; k < 3; k++) pre[i * 4 + k] = src.d[i * 4 + k] * al; pre[i * 4 + 3] = al; }
+  const v = pass(pass(pre, src.w, src.h, w, true), w, src.h, h, false), c = new Canvas(w, h);
+  for (let i = 0; i < w * h; i++) { const al = v[i * 4 + 3]; if (al >= 0.5) c.set(i % w, Math.floor(i / w), [v[i * 4] / al, v[i * 4 + 1] / al, v[i * 4 + 2] / al, 255]); }
+  return c;
+}
+// Unsharp mask over the opaque pixels (each pushed away from the average of its opaque 3x3 neighbourhood by amt)
+function unsharp(src, amt) {
+  const c = new Canvas(src.w, src.h); c.d.set(src.d);
+  for (let y = 0; y < src.h; y++) for (let x = 0; x < src.w; x++) {
+    const p = src.get(x, y); if (p[3] < 128) continue;
+    const s = [0, 0, 0]; let n = 0;
+    for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) { const q = src.get(x + dx, y + dy); if (q[3] >= 128) { s[0] += q[0]; s[1] += q[1]; s[2] += q[2]; n++; } }
+    c.set(x, y, [0, 1, 2].map(k => p[k] + (p[k] - s[k] / n) * amt).concat(255));
+  }
+  return c;
+}
+// Darkens the silhouette's edge pixels (any side touching transparency): a dark outline inside the shape, so a small
+// sprite reads against busy backgrounds. Bright pixels darken more than already-dark ones.
+function edgeOutline(src) {
+  const c = new Canvas(src.w, src.h); c.d.set(src.d);
+  for (let y = 0; y < src.h; y++) for (let x = 0; x < src.w; x++) {
+    const p = src.get(x, y); if (p[3] < 128) continue;
+    if (![[1, 0], [-1, 0], [0, 1], [0, -1]].some(([dx, dy]) => src.get(x + dx, y + dy)[3] < 128)) continue;
+    const f = (p[0] * 3 + p[1] * 4 + p[2] * 2) / 9 > 70 ? 0.45 : 0.8;
+    c.set(x, y, [p[0] * f, p[1] * f, p[2] * f, 255]);
+  }
+  return c;
+}
+// groupPalette() refined by k-means over the canvases' opaque pixels: keeps small accent colours (eyes, skin
+// highlights) that the closest-pair merge alone washes out
+function refinedPalette(canvases, rounds = 12) {
+  const hist = new Map();
+  for (const cv of canvases) for (let i = 0; i < cv.d.length; i += 4) if (cv.d[i + 3] >= 128) { const k = key([cv.d[i], cv.d[i + 1], cv.d[i + 2]]); hist.set(k, (hist.get(k) || 0) + 1); }
+  let pal = groupPalette(canvases);
+  for (let r = 0; r < rounds; r++) {
+    const acc = pal.map(() => [0, 0, 0, 0]);
+    for (const [k, w] of hist) { const c = [k >> 16 & 255, k >> 8 & 255, k & 255], a = acc[nearest(pal, c)]; a[0] += c[0] * w; a[1] += c[1] * w; a[2] += c[2] * w; a[3] += w; }
+    pal = pal.map((p, i) => acc[i][3] ? acc[i].slice(0, 3).map(v => v / acc[i][3]) : p);
+  }
+  return pal.map(c => q5(c.map(Math.round)));
+}
 // Splits a tall/wide canvas into 64x64 cells, row by row (for art bigger than the largest GBA sprite)
 function cells64(cv) { const out = []; for (let y = 0; y < cv.h; y += 64) for (let x = 0; x < cv.w; x += 64) { const c = new Canvas(64, 64); c.blit(cv, x, y, 64, 64, 0, 0); out.push(c); } return out; }
 
@@ -324,7 +383,8 @@ const skies = { jungle: SHADE.jungle(plx(1).get(0, 0)), grave: SHADE.grave(web('
 // ---------- The hero, Hellfire (the user's soldier, 2026-10-29; Mario until then) ----------
 // "new sprites" (the user's, 2026-10-30; "Military Character sprites" until then): idle, a 6-frame walk sheet and a 6-frame
 // jump sheet (3x2 grids of 128 px cells, jump's second row in the air), "pointing upward" / "straight up", the 45-degree
-// pose and prone, per weapon. Every frame is cropped to its figure and area-averaged at one scale: the one that makes the
+// pose and prone, per weapon. Every frame is cropped to its figure and Lanczos-resampled (then lightly sharpened and given
+// a dark edge; user 2026-11-03: sharper, clearer) at one scale: the one that makes the
 // 128-px idle poses HERO_H tall. Frames are 64x64: legs (the bottom 6 rows' middle) on column 24, feet on the bottom row.
 // One 15-colour palette for all of them. The rifle's tip in each frame goes to hero_frames.h, for the muzzle.
 // Frames: 0 idle, 1-6 walk, 7-9 in the air (rising, top, falling), 10 prone, 11 aiming up, 12 aiming at 45 degrees.
@@ -342,7 +402,7 @@ const heroTips = [];
 // k: the scale (HERO_K unless a pose has its own size, like prone); W, B: the canvas's width and the body centre's column
 // (64 and 24 for the sheet's frames; prone uses 128 and 64, see below)
 const heroFrame = (src, tip, k = HERO_K, W = 64, B = 24) => {
-  const crop = heroBox(src), art = downscale(crop, Math.max(1, Math.round(crop.w * k)), Math.max(1, Math.round(crop.h * k)));
+  const crop = heroBox(src), art = edgeOutline(unsharp(lanczos(crop, Math.max(1, Math.round(crop.w * k)), Math.max(1, Math.round(crop.h * k))), 0.4));
   let sx = 0, n = 0;
   for (let y = art.h - 6; y < art.h; y++) for (let x = 0; x < art.w; x++) if (art.get(x, y)[3] >= 128) { sx += x; n++; }
   const legs = Math.round(sx / n), f = new Canvas(W, 64), dx = B - legs;
@@ -404,10 +464,10 @@ for (const [name, w, up, diag, low, upH] of HERO_SETS) {
   const frames = [heroFrame(idleSrc, "ahead", HERO_H / heroBox(idleSrc).h), ...walk.map(c => heroFrame(c, "ahead")),
     ...[3, 4, 5].map(i => heroFrame(jump[i], "ahead")), lowFrame(),
     heroFrame(upSrc, "up", upH ? upH / heroBox(upSrc).h : HERO_K), heroFrame(loadPng(path.join(HERO_ART, diag + ".png")), "diag")];
-  emit(name, stack(frames), groupPalette(frames), { type: "sprite", height: 64 });
+  emit(name, stack(frames), refinedPalette(frames), { type: "sprite", height: 64 });
   if (prone) {
     const halves = [0, 64].map(x => { const c = new Canvas(64, 64); c.blit(prone, x, 0, 64, 64, 0, 0); return c; });
-    emit(`${name}_prone`, stack(halves), groupPalette(halves), { type: "sprite", height: 64 });
+    emit(`${name}_prone`, stack(halves), refinedPalette(halves), { type: "sprite", height: 64 });
   }
   const hs = frames.map(f => { for (let y = 0; y < 64; y++) for (let x = 0; x < 64; x++) if (f.get(x, y)[3] >= 128) return 64 - y; return 0; });
   console.log(`${name}: heights ${hs.join(" ")}; tips ${heroTips.map(t => t[0].toFixed(1) + "/" + t[1].toFixed(1)).join(" ")}`);
@@ -421,7 +481,7 @@ for (const [name, w, up, diag, low, upH] of HERO_SETS) {
 {
   heroTips.length = 0;
   const frames = [1, 2, 3].map(i => heroFrame(loadPng(path.join(HERO_ART, `grenade animation/grenade throw (frame ${i}).png`)), "ahead"));
-  emit('hero_grenade', stack(frames), groupPalette(frames), { type: "sprite", height: 64 });
+  emit('hero_grenade', stack(frames), refinedPalette(frames), { type: "sprite", height: 64 });
   const hs = frames.map(f => { for (let y = 0; y < 64; y++) for (let x = 0; x < 64; x++) if (f.get(x, y)[3] >= 128) return 64 - y; return 0; });
   console.log(`hero_grenade (throw): heights ${hs.join(" ")}; tips ${heroTips.map(t => t[0].toFixed(1) + "/" + t[1].toFixed(1)).join(" ")}`);
   const tips = heroTips.slice();
